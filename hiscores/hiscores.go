@@ -84,7 +84,7 @@ type HiscoreAPIError struct {
 	Mode   GameMode
 }
 
-// Enum constants for GameModes
+// Enumerated GameMode values
 var (
 	Normal          GameMode = GameMode{"Normal", ""}
 	Ironman         GameMode = GameMode{"Ironman", "_ironman"}
@@ -102,6 +102,7 @@ func (e *HiscoreAPIError) Error() string {
 
 // GetSkillHiscoreFromName maps string name to a specific hiscore
 func (hiscores Hiscores) GetSkillHiscoreFromName(name string) (SkillHiscore, error) {
+	// Skill name and alias mapping to individual skill hiscores
 	skillMap := map[string]SkillHiscore{
 		"overall":      hiscores.Overall,
 		"total":        hiscores.Overall,
@@ -169,6 +170,7 @@ func (hiscores Hiscores) GetSkillHiscoreFromName(name string) (SkillHiscore, err
 func parseSkillHiscore(name, hiscore string) (SkillHiscore, error) {
 	skill := SkillHiscore{Name: name}
 
+	// When a player is unranked, the result is -1,-1
 	if vals := strings.Split(hiscore, ","); vals[0] == "-1" {
 		skill.Rank, _ = strconv.Atoi(vals[0])
 		skill.Level, _ = strconv.Atoi(vals[1])
@@ -182,6 +184,7 @@ func parseSkillHiscore(name, hiscore string) (SkillHiscore, error) {
 func parseMinigameHiscore(name, hiscore string) (MinigameHiscore, error) {
 	minigame := MinigameHiscore{Name: name}
 
+	// When a player is unranked, the result is -1,-1
 	if vals := strings.Split(hiscore, ","); vals[0] == "-1" {
 		minigame.Rank, _ = strconv.Atoi(vals[0])
 		minigame.Score, _ = strconv.Atoi(vals[1])
@@ -195,6 +198,7 @@ func parseCSVHiscores(hiscoreCSV string) Hiscores {
 	hiscores := Hiscores{}
 	allScores := strings.Fields(hiscoreCSV)
 
+	// Skill mappings
 	hiscores.Overall, _ = parseSkillHiscore("Overall", allScores[0])
 	hiscores.Attack, _ = parseSkillHiscore("Attack", allScores[1])
 	hiscores.Defense, _ = parseSkillHiscore("Defense", allScores[2])
@@ -220,11 +224,14 @@ func parseCSVHiscores(hiscoreCSV string) Hiscores {
 	hiscores.Hunter, _ = parseSkillHiscore("Hunter", allScores[22])
 	hiscores.Construction, _ = parseSkillHiscore("Construction", allScores[23])
 
+	// Bounty Hunter mappings
 	hiscores.BHHunter, _ = parseMinigameHiscore("Bounty Hunter - Hunter", allScores[24])
 	hiscores.BHRogue, _ = parseMinigameHiscore("Bounty Hunter - Rogue", allScores[25])
 
+	// LMS mappings
 	hiscores.LMS, _ = parseMinigameHiscore("LMS", allScores[26])
 
+	// Clue mappings
 	cluesOverall, _ := parseMinigameHiscore("Clue Scrolls - Overall", allScores[27])
 	cluesBeginner, _ := parseMinigameHiscore("Clue Scrolls - Beginner", allScores[28])
 	cluesEasy, _ := parseMinigameHiscore("Clue Scrolls - Easy", allScores[29])
@@ -260,11 +267,13 @@ func LookupHiscores(player string, mode GameMode) (Hiscores, error) {
 	}
 
 	defer resp.Body.Close()
-	if resp.StatusCode == 200 {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
-		body := string(bodyBytes)
-		return parseCSVHiscores(body), nil
+
+	// Any other status code means the player does not exist in the given mode
+	if resp.StatusCode != 200 {
+		return Hiscores{}, &HiscoreAPIError{player, mode}
 	}
 
-	return Hiscores{}, &HiscoreAPIError{player, mode}
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+	body := string(bodyBytes)
+	return parseCSVHiscores(body), nil
 }
