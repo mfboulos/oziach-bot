@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 
+	"github.com/dustin/go-humanize"
 	"github.com/gempir/go-twitch-irc"
 	"github.com/mfboulos/oziachbot/hiscores"
 )
@@ -30,14 +31,14 @@ func (bot *OziachBot) HandleSkillLookup(channel string, user twitch.User, skillN
 	}
 
 	bot.Client.Say(channel, fmt.Sprintf(
-		"/me @%s - %s, %s level: %d, Rank (%s): %d, Exp: %d",
+		"/me @%s - %s | %s level: %s | Rank (%s): %s | Exp: %s",
 		user.DisplayName,
 		player,
 		skill.Name,
-		skill.Level,
+		humanize.Comma(int64(skill.Level)),
 		mode.Name,
-		skill.Rank,
-		skill.Exp,
+		humanize.Comma(int64(skill.Rank)),
+		humanize.Comma(int64(skill.Exp)),
 	))
 
 	return nil
