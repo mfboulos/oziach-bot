@@ -34,10 +34,10 @@ func (bot *OziachBot) HandleSkillLookup(channel string, user twitch.User, skillN
 		// To determine what kind of ironman we have, first we check to see if there is a
 		// hiscore under that GameMode. If the hiscores in that GameMode and GameMode.Ironman
 		// match, the player is in that GameMode
-		if err3 == nil && hardcoreHiscores == ironmanHiscores {
+		if err3 == nil && hiscores.SameScores(hardcoreHiscores, ironmanHiscores) {
 			playerHiscores = hardcoreHiscores
 			mode = hiscores.HardcoreIronman
-		} else if err4 == nil && ultimateHiscores == ironmanHiscores {
+		} else if err4 == nil && hiscores.SameScores(ultimateHiscores, ironmanHiscores) {
 			playerHiscores = ultimateHiscores
 			mode = hiscores.UltimateIronman
 		} else {

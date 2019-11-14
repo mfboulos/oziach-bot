@@ -100,6 +100,44 @@ func (e *HiscoreAPIError) Error() string {
 	return fmt.Sprintf("%s is not a(n) %s account", e.Player, e.Mode)
 }
 
+// SameScores Returns true if the hiscores represent the same account, false otherwise
+func SameScores(h1, h2 Hiscores) bool {
+	// If any of these cases hit, it'll break out of the switch
+	//
+	// I don't like it either, but not having multiline or statements and the object
+	// property structure of Hiscores forces us to check equality independently
+	switch {
+	case h1.Overall.Exp != h2.Overall.Exp:
+	case h1.Overall.Exp != h2.Overall.Exp:
+	case h1.Attack.Exp != h2.Attack.Exp:
+	case h1.Defense.Exp != h2.Defense.Exp:
+	case h1.Strength.Exp != h2.Strength.Exp:
+	case h1.Hitpoints.Exp != h2.Hitpoints.Exp:
+	case h1.Ranged.Exp != h2.Ranged.Exp:
+	case h1.Prayer.Exp != h2.Prayer.Exp:
+	case h1.Magic.Exp != h2.Magic.Exp:
+	case h1.Cooking.Exp != h2.Cooking.Exp:
+	case h1.Woodcutting.Exp != h2.Woodcutting.Exp:
+	case h1.Fletching.Exp != h2.Fletching.Exp:
+	case h1.Fishing.Exp != h2.Fishing.Exp:
+	case h1.Firemaking.Exp != h2.Firemaking.Exp:
+	case h1.Crafting.Exp != h2.Crafting.Exp:
+	case h1.Smithing.Exp != h2.Smithing.Exp:
+	case h1.Mining.Exp != h2.Mining.Exp:
+	case h1.Herblore.Exp != h2.Herblore.Exp:
+	case h1.Agility.Exp != h2.Agility.Exp:
+	case h1.Thieving.Exp != h2.Thieving.Exp:
+	case h1.Slayer.Exp != h2.Slayer.Exp:
+	case h1.Farming.Exp != h2.Farming.Exp:
+	case h1.Runecraft.Exp != h2.Runecraft.Exp:
+	case h1.Hunter.Exp != h2.Hunter.Exp:
+	case h1.Construction.Exp != h2.Construction.Exp:
+	default:
+		return true
+	}
+	return false
+}
+
 // GetSkillHiscoreFromName maps string name to a specific hiscore
 func (hiscores Hiscores) GetSkillHiscoreFromName(name string) (SkillHiscore, error) {
 	// Skill name and alias mapping to individual skill hiscores
@@ -171,7 +209,7 @@ func parseSkillHiscore(name, hiscore string) (SkillHiscore, error) {
 	skill := SkillHiscore{Name: name}
 
 	// When a player is unranked, the result is -1,-1
-	if vals := strings.Split(hiscore, ","); vals[0] == "-1" {
+	if vals := strings.Split(hiscore, ","); vals[0] != "-1" {
 		skill.Rank, _ = strconv.Atoi(vals[0])
 		skill.Level, _ = strconv.Atoi(vals[1])
 		skill.Exp, _ = strconv.Atoi(vals[2])
@@ -185,7 +223,7 @@ func parseMinigameHiscore(name, hiscore string) (MinigameHiscore, error) {
 	minigame := MinigameHiscore{Name: name}
 
 	// When a player is unranked, the result is -1,-1
-	if vals := strings.Split(hiscore, ","); vals[0] == "-1" {
+	if vals := strings.Split(hiscore, ","); vals[0] != "-1" {
 		minigame.Rank, _ = strconv.Atoi(vals[0])
 		minigame.Score, _ = strconv.Atoi(vals[1])
 		return minigame, nil
