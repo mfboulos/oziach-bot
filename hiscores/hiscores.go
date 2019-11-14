@@ -17,7 +17,6 @@ type GameMode struct {
 
 // SkillHiscore struct representing the hiscore of a single skill
 type SkillHiscore struct {
-	Name  string
 	Rank  int
 	Level int
 	Exp   int
@@ -25,7 +24,6 @@ type SkillHiscore struct {
 
 // MinigameHiscore struct representing the hiscore of anything that's not a skill
 type MinigameHiscore struct {
-	Name  string
 	Rank  int
 	Score int
 }
@@ -42,37 +40,14 @@ type clueHiscores struct {
 
 // Hiscores Model housing all hiscores returned from OSRS Hiscore API
 type Hiscores struct {
-	Overall      SkillHiscore
-	Attack       SkillHiscore
-	Defense      SkillHiscore
-	Strength     SkillHiscore
-	Hitpoints    SkillHiscore
-	Ranged       SkillHiscore
-	Prayer       SkillHiscore
-	Magic        SkillHiscore
-	Cooking      SkillHiscore
-	Woodcutting  SkillHiscore
-	Fletching    SkillHiscore
-	Fishing      SkillHiscore
-	Firemaking   SkillHiscore
-	Crafting     SkillHiscore
-	Smithing     SkillHiscore
-	Mining       SkillHiscore
-	Herblore     SkillHiscore
-	Agility      SkillHiscore
-	Thieving     SkillHiscore
-	Slayer       SkillHiscore
-	Farming      SkillHiscore
-	Runecraft    SkillHiscore
-	Hunter       SkillHiscore
-	Construction SkillHiscore
+	skills []SkillHiscore
 
-	BHHunter MinigameHiscore
-	BHRogue  MinigameHiscore
+	bhHunter MinigameHiscore
+	bhRogue  MinigameHiscore
 
-	LMS MinigameHiscore
+	lms MinigameHiscore
 
-	Clues clueHiscores
+	clues []MinigameHiscore
 }
 
 // UnrankedError Returned when a hiscore doesn't exist (player is unranked)
@@ -84,12 +59,123 @@ type HiscoreAPIError struct {
 	Mode   GameMode
 }
 
-// Enumerated GameMode values
+type hiscoreAPI interface {
+	GetHiscoresAPIResponse(player string, mode GameMode) (string, error)
+}
+
+type hiscoreAPIImpl struct{}
+
+func (hiscoreAPIImpl) GetHiscoresAPIResponse(player string, mode GameMode) (string, error) {
+	url := fmt.Sprintf(
+		"https://secure.runescape.com/m=hiscore_oldschool%s/index_lite.ws?player=%s",
+		mode.urlComponent,
+		player,
+	)
+
+	resp, err := http.Get(url)
+
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+
+	// Any other status code means the player does not exist in the given mode
+	if resp.StatusCode != 200 {
+		return "", &HiscoreAPIError{player, mode}
+	}
+
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+	return string(bodyBytes), nil
+}
+
 var (
-	Normal          GameMode = GameMode{"Normal", ""}
-	Ironman         GameMode = GameMode{"Ironman", "_ironman"}
-	HardcoreIronman GameMode = GameMode{"Hardcore Ironman", "_hardcore_ironman"}
-	UltimateIronman GameMode = GameMode{"Ultimate Ironman", "_ultimate"}
+	// Enumerated GameMode values
+	normal          GameMode = GameMode{"Normal", ""}
+	ironman         GameMode = GameMode{"Ironman", "_ironman"}
+	hardcoreIronman GameMode = GameMode{"Hardcore Ironman", "_hardcore_ironman"}
+	ultimateIronman GameMode = GameMode{"Ultimate Ironman", "_ultimate"}
+
+	// Skill names concurrent to Hiscores.skills
+	skillNames []string = []string{
+		"Overall",
+		"Attack",
+		"Defense",
+		"Strength",
+		"Hitpoints",
+		"Ranged",
+		"Prayer",
+		"Magic",
+		"Cooking",
+		"Woodcutting",
+		"Fletching",
+		"Fishing",
+		"Firemaking",
+		"Crafting",
+		"Smithing",
+		"Mining",
+		"Herblore",
+		"Agility",
+		"Thieving",
+		"Slayer",
+		"Farming",
+		"Runecraft",
+		"Hunter",
+		"Construction",
+	}
+
+	// Clue score names concurrent to Hiscores.clues
+	clueNames []string = []string{
+		"Overall",
+		"Beginner",
+		"Easy",
+		"Medium",
+		"Hard",
+		"Elite",
+		"Master",
+	}
+)
+
+// Skill Enum value for skill
+type Skill int
+
+// Clue Enum value for clue type
+type Clue int
+
+// Enumerated values for index retrieval of array-based scores
+const (
+	Overall      Skill = 0
+	Attack       Skill = 1
+	Defense      Skill = 2
+	Strength     Skill = 3
+	Hitpoints    Skill = 4
+	Ranged       Skill = 5
+	Prayer       Skill = 6
+	Magic        Skill = 7
+	Cooking      Skill = 8
+	Woodcutting  Skill = 9
+	Fletching    Skill = 10
+	Fishing      Skill = 11
+	Firemaking   Skill = 12
+	Crafting     Skill = 13
+	Smithing     Skill = 14
+	Mining       Skill = 15
+	Herblore     Skill = 16
+	Agility      Skill = 17
+	Thieving     Skill = 18
+	Slayer       Skill = 19
+	Farming      Skill = 20
+	Runecraft    Skill = 21
+	Hunter       Skill = 22
+	Construction Skill = 23
+
+	OverallClues  Clue = 0
+	BeginnerClues Clue = 1
+	EasyClues     Clue = 2
+	MediumClues   Clue = 3
+	HardClues     Clue = 4
+	EliteClues    Clue = 5
+	MasterClues   Clue = 6
 )
 
 func (e *UnrankedError) Error() string {
@@ -97,55 +183,32 @@ func (e *UnrankedError) Error() string {
 }
 
 func (e *HiscoreAPIError) Error() string {
-	return fmt.Sprintf("%s is not a(n) %s account", e.Player, e.Mode)
+	return fmt.Sprintf("%s is not a(n) %s account", e.Player, e.Mode.Name)
 }
 
 // SameScores Returns true if the hiscores represent the same account, false otherwise
 func SameScores(h1, h2 Hiscores) bool {
-	// If any of these cases hit, it'll break out of the switch
-	//
-	// I don't like it either, but not having multiline or statements and the object
-	// property structure of Hiscores forces us to check equality independently
-	switch {
-	case h1.Overall.Exp != h2.Overall.Exp:
-	case h1.Overall.Exp != h2.Overall.Exp:
-	case h1.Attack.Exp != h2.Attack.Exp:
-	case h1.Defense.Exp != h2.Defense.Exp:
-	case h1.Strength.Exp != h2.Strength.Exp:
-	case h1.Hitpoints.Exp != h2.Hitpoints.Exp:
-	case h1.Ranged.Exp != h2.Ranged.Exp:
-	case h1.Prayer.Exp != h2.Prayer.Exp:
-	case h1.Magic.Exp != h2.Magic.Exp:
-	case h1.Cooking.Exp != h2.Cooking.Exp:
-	case h1.Woodcutting.Exp != h2.Woodcutting.Exp:
-	case h1.Fletching.Exp != h2.Fletching.Exp:
-	case h1.Fishing.Exp != h2.Fishing.Exp:
-	case h1.Firemaking.Exp != h2.Firemaking.Exp:
-	case h1.Crafting.Exp != h2.Crafting.Exp:
-	case h1.Smithing.Exp != h2.Smithing.Exp:
-	case h1.Mining.Exp != h2.Mining.Exp:
-	case h1.Herblore.Exp != h2.Herblore.Exp:
-	case h1.Agility.Exp != h2.Agility.Exp:
-	case h1.Thieving.Exp != h2.Thieving.Exp:
-	case h1.Slayer.Exp != h2.Slayer.Exp:
-	case h1.Farming.Exp != h2.Farming.Exp:
-	case h1.Runecraft.Exp != h2.Runecraft.Exp:
-	case h1.Hunter.Exp != h2.Hunter.Exp:
-	case h1.Construction.Exp != h2.Construction.Exp:
-	default:
-		return true
+	for i, skill := range h1.skills {
+		if skill.Exp != h2.skills[i].Exp {
+			return false
+		}
 	}
-	return false
+
+	return true
 }
 
-// HiscoreOfPlayerGameMode Retrieves the hiscore based on the most restrictive
+// LookupHiscores Retrieves the hiscore based on the most restrictive
 // GameMode pertaining to the player
 //
 // For example, a Hardcore Ironman has a Normal, Ironman, and Hardcore Ironman
 // hiscore entry, but here we only return the Hardcore Ironman entry
-func HiscoreOfPlayerGameMode(player string) (Hiscores, GameMode, error) {
-	mode := Normal
-	playerHiscores, err := LookupHiscores(player, mode)
+func LookupHiscores(player string) (Hiscores, GameMode, error) {
+	return lookupHiscores(player, hiscoreAPIImpl{})
+}
+
+func lookupHiscores(player string, builder hiscoreAPI) (Hiscores, GameMode, error) {
+	mode := normal
+	playerHiscores, err := lookupHiscoresByGameMode(player, mode, builder)
 
 	// All players should be in normal hiscores. If they are not, they are either unranked
 	// or they do not exist
@@ -153,112 +216,108 @@ func HiscoreOfPlayerGameMode(player string) (Hiscores, GameMode, error) {
 		return playerHiscores, mode, err
 	}
 
-	ironmanHiscores, err2 := LookupHiscores(player, Ironman)
-	if err2 == nil {
-		hardcoreHiscores, err3 := LookupHiscores(player, HardcoreIronman)
-		ultimateHiscores, err4 := LookupHiscores(player, UltimateIronman)
+	ironmanHiscores, err := lookupHiscoresByGameMode(player, ironman, builder)
+	if err == nil {
+		hardcoreHiscores, err := lookupHiscoresByGameMode(player, hardcoreIronman, builder)
+		ultimateHiscores, err2 := lookupHiscoresByGameMode(player, ultimateIronman, builder)
 
 		// To determine what kind of ironman we have, first we check to see if there is a
 		// hiscore under that GameMode. If experience values in that GameMode and
-		// GameMode.Ironman match, the player is in that GameMode
-		if err3 == nil && SameScores(hardcoreHiscores, ironmanHiscores) {
+		// ironman mode match, the player is in that GameMode
+		if err == nil && SameScores(hardcoreHiscores, ironmanHiscores) {
 			playerHiscores = hardcoreHiscores
-			mode = HardcoreIronman
-		} else if err4 == nil && SameScores(ultimateHiscores, ironmanHiscores) {
+			mode = hardcoreIronman
+		} else if err2 == nil && SameScores(ultimateHiscores, ironmanHiscores) {
 			playerHiscores = ultimateHiscores
-			mode = UltimateIronman
+			mode = ultimateIronman
 		} else {
 			playerHiscores = ironmanHiscores
-			mode = Ironman
+			mode = ironman
 		}
 	}
 
 	return playerHiscores, mode, nil
 }
 
-// GetSkillHiscoreFromName maps string name to a specific hiscore
-func (hiscores Hiscores) GetSkillHiscoreFromName(name string) (SkillHiscore, error) {
+// GetSkillHiscoreFromName maps string name to a specific hiscore, returns that score
+// with its official name
+func (hiscores Hiscores) GetSkillHiscoreFromName(name string) (string, SkillHiscore, error) {
 	// Skill name and alias mapping to individual skill hiscores
-	skillMap := map[string]SkillHiscore{
-		"overall":      hiscores.Overall,
-		"total":        hiscores.Overall,
-		"attack":       hiscores.Attack,
-		"atk":          hiscores.Attack,
-		"defense":      hiscores.Defense,
-		"def":          hiscores.Defense,
-		"strength":     hiscores.Strength,
-		"str":          hiscores.Strength,
-		"hitpoints":    hiscores.Hitpoints,
-		"hp":           hiscores.Hitpoints,
-		"ranged":       hiscores.Ranged,
-		"range":        hiscores.Ranged,
-		"ranging":      hiscores.Ranged,
-		"prayer":       hiscores.Prayer,
-		"pray":         hiscores.Prayer,
-		"magic":        hiscores.Magic,
-		"mage":         hiscores.Magic,
-		"magician":     hiscores.Magic,
-		"cooking":      hiscores.Cooking,
-		"cook":         hiscores.Cooking,
-		"woodcutting":  hiscores.Woodcutting,
-		"woodcut":      hiscores.Woodcutting,
-		"wc":           hiscores.Woodcutting,
-		"fletching":    hiscores.Fletching,
-		"fletch":       hiscores.Fletching,
-		"fishing":      hiscores.Fishing,
-		"fish":         hiscores.Fishing,
-		"firemaking":   hiscores.Firemaking,
-		"fm":           hiscores.Firemaking,
-		"crafting":     hiscores.Crafting,
-		"craft":        hiscores.Crafting,
-		"smithing":     hiscores.Smithing,
-		"smith":        hiscores.Smithing,
-		"mining":       hiscores.Mining,
-		"mine":         hiscores.Mining,
-		"herblore":     hiscores.Herblore,
-		"herb":         hiscores.Herblore,
-		"agility":      hiscores.Agility,
-		"agil":         hiscores.Agility,
-		"thieving":     hiscores.Thieving,
-		"thieve":       hiscores.Thieving,
-		"thiev":        hiscores.Thieving,
-		"slayer":       hiscores.Slayer,
-		"slay":         hiscores.Slayer,
-		"farming":      hiscores.Farming,
-		"farm":         hiscores.Farming,
-		"kkona":        hiscores.Farming,
-		"runecraft":    hiscores.Runecraft,
-		"rc":           hiscores.Runecraft,
-		"hunter":       hiscores.Hunter,
-		"hunting":      hiscores.Hunter,
-		"hunt":         hiscores.Hunter,
-		"construction": hiscores.Construction,
-		"con":          hiscores.Construction,
+	skillMap := map[string]Skill{
+		"overall":      Overall,
+		"total":        Overall,
+		"attack":       Attack,
+		"atk":          Attack,
+		"defense":      Defense,
+		"def":          Defense,
+		"strength":     Strength,
+		"str":          Strength,
+		"hitpoints":    Hitpoints,
+		"hp":           Hitpoints,
+		"ranged":       Ranged,
+		"range":        Ranged,
+		"ranging":      Ranged,
+		"prayer":       Prayer,
+		"pray":         Prayer,
+		"magic":        Magic,
+		"mage":         Magic,
+		"magician":     Magic,
+		"cooking":      Cooking,
+		"cook":         Cooking,
+		"woodcutting":  Woodcutting,
+		"woodcut":      Woodcutting,
+		"wc":           Woodcutting,
+		"fletching":    Fletching,
+		"fletch":       Fletching,
+		"fishing":      Fishing,
+		"fish":         Fishing,
+		"firemaking":   Firemaking,
+		"fm":           Firemaking,
+		"crafting":     Crafting,
+		"craft":        Crafting,
+		"smithing":     Smithing,
+		"smith":        Smithing,
+		"mining":       Mining,
+		"mine":         Mining,
+		"herblore":     Herblore,
+		"herb":         Herblore,
+		"agility":      Agility,
+		"agil":         Agility,
+		"thieving":     Thieving,
+		"thieve":       Thieving,
+		"thiev":        Thieving,
+		"slayer":       Slayer,
+		"slay":         Slayer,
+		"farming":      Farming,
+		"farm":         Farming,
+		"kkona":        Farming,
+		"runecraft":    Runecraft,
+		"rc":           Runecraft,
+		"hunter":       Hunter,
+		"hunting":      Hunter,
+		"hunt":         Hunter,
+		"construction": Construction,
+		"con":          Construction,
 	}
 
-	if skillHiscore, ok := skillMap[strings.ToLower(name)]; ok {
-		return skillHiscore, nil
+	if skill, ok := skillMap[strings.ToLower(name)]; ok {
+		return skillNames[skill], hiscores.skills[skill], nil
 	}
 
-	return hiscores.Overall, errors.New("Could not map name to skill")
+	return "", SkillHiscore{}, errors.New("Could not map name to skill")
 }
 
-func parseSkillHiscore(name, hiscore string) (SkillHiscore, error) {
-	skill := SkillHiscore{Name: name}
-
-	// When a player is unranked, the result is -1,-1
-	if vals := strings.Split(hiscore, ","); vals[0] != "-1" {
-		skill.Rank, _ = strconv.Atoi(vals[0])
-		skill.Level, _ = strconv.Atoi(vals[1])
-		skill.Exp, _ = strconv.Atoi(vals[2])
-		return skill, nil
-	}
-
-	return skill, &UnrankedError{}
+func parseSkillHiscore(hiscore string) (SkillHiscore, error) {
+	skill := SkillHiscore{}
+	vals := strings.Split(hiscore, ",")
+	skill.Rank, _ = strconv.Atoi(vals[0])
+	skill.Level, _ = strconv.Atoi(vals[1])
+	skill.Exp, _ = strconv.Atoi(vals[2])
+	return skill, nil
 }
 
-func parseMinigameHiscore(name, hiscore string) (MinigameHiscore, error) {
-	minigame := MinigameHiscore{Name: name}
+func parseMinigameHiscore(hiscore string) (MinigameHiscore, error) {
+	minigame := MinigameHiscore{}
 
 	// When a player is unranked, the result is -1,-1
 	if vals := strings.Split(hiscore, ","); vals[0] != "-1" {
@@ -275,81 +334,38 @@ func parseCSVHiscores(hiscoreCSV string) Hiscores {
 	allScores := strings.Fields(hiscoreCSV)
 
 	// Skill mappings
-	hiscores.Overall, _ = parseSkillHiscore("Overall", allScores[0])
-	hiscores.Attack, _ = parseSkillHiscore("Attack", allScores[1])
-	hiscores.Defense, _ = parseSkillHiscore("Defense", allScores[2])
-	hiscores.Strength, _ = parseSkillHiscore("Strength", allScores[3])
-	hiscores.Hitpoints, _ = parseSkillHiscore("Hitpoints", allScores[4])
-	hiscores.Ranged, _ = parseSkillHiscore("Ranged", allScores[5])
-	hiscores.Prayer, _ = parseSkillHiscore("Prayer", allScores[6])
-	hiscores.Magic, _ = parseSkillHiscore("Magic", allScores[7])
-	hiscores.Cooking, _ = parseSkillHiscore("Cooking", allScores[8])
-	hiscores.Woodcutting, _ = parseSkillHiscore("Woodcutting", allScores[9])
-	hiscores.Fletching, _ = parseSkillHiscore("Fletching", allScores[10])
-	hiscores.Fishing, _ = parseSkillHiscore("Fishing", allScores[11])
-	hiscores.Firemaking, _ = parseSkillHiscore("Firemaking", allScores[12])
-	hiscores.Crafting, _ = parseSkillHiscore("Crafting", allScores[13])
-	hiscores.Smithing, _ = parseSkillHiscore("Smithing", allScores[14])
-	hiscores.Mining, _ = parseSkillHiscore("Mining", allScores[15])
-	hiscores.Herblore, _ = parseSkillHiscore("Herblore", allScores[16])
-	hiscores.Agility, _ = parseSkillHiscore("Agility", allScores[17])
-	hiscores.Thieving, _ = parseSkillHiscore("Thieving", allScores[18])
-	hiscores.Slayer, _ = parseSkillHiscore("Slayer", allScores[19])
-	hiscores.Farming, _ = parseSkillHiscore("Farming", allScores[20])
-	hiscores.Runecraft, _ = parseSkillHiscore("Runecraft", allScores[21])
-	hiscores.Hunter, _ = parseSkillHiscore("Hunter", allScores[22])
-	hiscores.Construction, _ = parseSkillHiscore("Construction", allScores[23])
+	hiscores.skills = make([]SkillHiscore, 24)
+	for i, skill := range allScores[:24] {
+		hiscores.skills[i], _ = parseSkillHiscore(skill)
+	}
 
 	// Bounty Hunter mappings
-	hiscores.BHHunter, _ = parseMinigameHiscore("Bounty Hunter - Hunter", allScores[24])
-	hiscores.BHRogue, _ = parseMinigameHiscore("Bounty Hunter - Rogue", allScores[25])
+	hiscores.bhHunter, _ = parseMinigameHiscore(allScores[24])
+	hiscores.bhRogue, _ = parseMinigameHiscore(allScores[25])
 
-	// LMS mappings
-	hiscores.LMS, _ = parseMinigameHiscore("LMS", allScores[26])
+	// LMS mapping
+	hiscores.lms, _ = parseMinigameHiscore(allScores[26])
 
 	// Clue mappings
-	cluesOverall, _ := parseMinigameHiscore("Clue Scrolls - Overall", allScores[27])
-	cluesBeginner, _ := parseMinigameHiscore("Clue Scrolls - Beginner", allScores[28])
-	cluesEasy, _ := parseMinigameHiscore("Clue Scrolls - Easy", allScores[29])
-	cluesMedium, _ := parseMinigameHiscore("Clue Scrolls - Medium", allScores[30])
-	cluesHard, _ := parseMinigameHiscore("Clue Scrolls - Hard", allScores[31])
-	cluesElite, _ := parseMinigameHiscore("Clue Scrolls - Elite", allScores[32])
-	cluesMaster, _ := parseMinigameHiscore("Clue Scrolls - Master", allScores[33])
-	hiscores.Clues = clueHiscores{
-		Overall:  cluesOverall,
-		Beginner: cluesBeginner,
-		Easy:     cluesEasy,
-		Medium:   cluesMedium,
-		Hard:     cluesHard,
-		Elite:    cluesElite,
-		Master:   cluesMaster,
+	hiscores.clues = make([]MinigameHiscore, 7)
+	for i, clue := range allScores[27:34] {
+		hiscores.clues[i], _ = parseMinigameHiscore(clue)
 	}
 
 	return hiscores
 }
 
-// LookupHiscores Looks up a player's hiscores ranked according to the given GameMode
-func LookupHiscores(player string, mode GameMode) (Hiscores, error) {
-	url := fmt.Sprintf(
-		"https://secure.runescape.com/m=hiscore_oldschool%s/index_lite.ws?player=%s",
-		mode.urlComponent,
-		player,
-	)
+// LookupHiscoresByGameMode Looks up a player's hiscores ranked according to the given GameMode
+func LookupHiscoresByGameMode(player string, mode GameMode) (Hiscores, error) {
+	return lookupHiscoresByGameMode(player, mode, hiscoreAPIImpl{})
+}
 
-	resp, err := http.Get(url)
+func lookupHiscoresByGameMode(player string, mode GameMode, builder hiscoreAPI) (Hiscores, error) {
+	csv, err := builder.GetHiscoresAPIResponse(player, mode)
 
 	if err != nil {
 		return Hiscores{}, err
 	}
 
-	defer resp.Body.Close()
-
-	// Any other status code means the player does not exist in the given mode
-	if resp.StatusCode != 200 {
-		return Hiscores{}, &HiscoreAPIError{player, mode}
-	}
-
-	bodyBytes, _ := ioutil.ReadAll(resp.Body)
-	body := string(bodyBytes)
-	return parseCSVHiscores(body), nil
+	return parseCSVHiscores(csv), nil
 }
