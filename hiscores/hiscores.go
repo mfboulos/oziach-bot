@@ -138,6 +138,44 @@ func SameScores(h1, h2 Hiscores) bool {
 	return false
 }
 
+// HiscoreOfPlayerGameMode Retrieves the hiscore based on the most restrictive
+// GameMode pertaining to the player
+//
+// For example, a Hardcore Ironman has a Normal, Ironman, and Hardcore Ironman
+// hiscore entry, but here we only return the Hardcore Ironman entry
+func HiscoreOfPlayerGameMode(player string) (Hiscores, GameMode, error) {
+	mode := Normal
+	playerHiscores, err := LookupHiscores(player, mode)
+
+	// All players should be in normal hiscores. If they are not, they are either unranked
+	// or they do not exist
+	if err != nil {
+		return playerHiscores, mode, err
+	}
+
+	ironmanHiscores, err2 := LookupHiscores(player, Ironman)
+	if err2 == nil {
+		hardcoreHiscores, err3 := LookupHiscores(player, HardcoreIronman)
+		ultimateHiscores, err4 := LookupHiscores(player, UltimateIronman)
+
+		// To determine what kind of ironman we have, first we check to see if there is a
+		// hiscore under that GameMode. If experience values in that GameMode and
+		// GameMode.Ironman match, the player is in that GameMode
+		if err3 == nil && SameScores(hardcoreHiscores, ironmanHiscores) {
+			playerHiscores = hardcoreHiscores
+			mode = HardcoreIronman
+		} else if err4 == nil && SameScores(ultimateHiscores, ironmanHiscores) {
+			playerHiscores = ultimateHiscores
+			mode = UltimateIronman
+		} else {
+			playerHiscores = ironmanHiscores
+			mode = Ironman
+		}
+	}
+
+	return playerHiscores, mode, nil
+}
+
 // GetSkillHiscoreFromName maps string name to a specific hiscore
 func (hiscores Hiscores) GetSkillHiscoreFromName(name string) (SkillHiscore, error) {
 	// Skill name and alias mapping to individual skill hiscores
