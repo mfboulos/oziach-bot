@@ -91,10 +91,10 @@ func (bot *OziachBot) GetLatestShardIterator() (shardID, shardIterator *string, 
 	return shard.ShardId, shardIteratorOutput.ShardIterator, err
 }
 
-func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator *string, f func(record *dynamodbstreams.Record)) error {
-	if shardIterator != nil {
+func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator **string, f func(record *dynamodbstreams.Record)) error {
+	if *shardIterator != nil {
 		gri := &dynamodbstreams.GetRecordsInput{
-			ShardIterator: shardIterator,
+			ShardIterator: *shardIterator,
 		}
 		recordOutput, err := bot.dbStream.GetRecords(gri)
 
@@ -106,13 +106,14 @@ func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator *string, f fu
 			f(record)
 		}
 
-		*shardIterator = *recordOutput.NextShardIterator
+		*shardIterator = recordOutput.NextShardIterator
 	}
 
-	if shardIterator == nil {
-		dsi := (&dynamodbstreams.DescribeStreamInput{})
+	if *shardIterator == nil {
+		dsi := (&dynamodbstreams.DescribeStreamInput{
+			ExclusiveStartShardId: *shardID,
+		})
 		dsi.SetStreamArn(bot.streamArn)
-		dsi.SetExclusiveStartShardId(*shardID)
 		desc, err := bot.dbStream.DescribeStream(dsi)
 
 		if err != nil {
@@ -122,9 +123,10 @@ func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator *string, f fu
 		shards := desc.StreamDescription.Shards[1:]
 
 		for _, shard := range shards {
-			*shardID = *shard.ShardId
-			iterInput := (&dynamodbstreams.GetShardIteratorInput{})
-			iterInput = iterInput.SetShardId(*shardID)
+			*shardID = shard.ShardId
+			iterInput := (&dynamodbstreams.GetShardIteratorInput{
+				ShardId: *shardID,
+			})
 			iterInput = iterInput.SetShardIteratorType(dynamodbstreams.ShardIteratorTypeTrimHorizon)
 			iterInput = iterInput.SetStreamArn(bot.streamArn)
 			shardIteratorOutput, err := bot.dbStream.GetShardIterator(iterInput)
@@ -133,9 +135,9 @@ func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator *string, f fu
 				return err
 			}
 
-			shardIterator = shardIteratorOutput.ShardIterator
+			*shardIterator = shardIteratorOutput.ShardIterator
 			gri := &dynamodbstreams.GetRecordsInput{
-				ShardIterator: shardIterator,
+				ShardIterator: *shardIterator,
 			}
 			recordOutput, err := bot.dbStream.GetRecords(gri)
 
@@ -146,7 +148,7 @@ func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator *string, f fu
 			for _, record := range recordOutput.Records {
 				f(record)
 			}
-			*shardIterator = *recordOutput.NextShardIterator
+			*shardIterator = recordOutput.NextShardIterator
 		}
 	}
 
@@ -168,7 +170,7 @@ func (bot *OziachBot) listenForChanges() {
 	}
 
 	for range tick {
-		bot.mapFuncToStreamOutput(shardID, shardIterator, func(record *dynamodbstreams.Record) {
+		bot.mapFuncToStreamOutput(&shardID, &shardIterator, func(record *dynamodbstreams.Record) {
 			channel := Channel{}
 			switch *record.EventName {
 			case dynamodbstreams.OperationTypeInsert:
