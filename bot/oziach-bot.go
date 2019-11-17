@@ -5,29 +5,57 @@ import (
 	"os"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/gempir/go-twitch-irc"
 )
 
 // OziachBot Wrapper class for twitch.Client that encompasses all OziachBot features
 type OziachBot struct {
-	Client   *twitch.Client
-	channels []string
+	TwitchClient   *twitch.Client
+	dynamoDBClient *dynamodb.DynamoDB
+}
+
+// Channel DynamoDB schema for channel records
+type Channel struct {
+	Name string
 }
 
 // InitBot Initalizes OziachBot with callbacks and channels it needs to join
 func InitBot() OziachBot {
-	client := twitch.NewClient("OziachBot", fmt.Sprintf("oauth:%s", os.Getenv("OZIACH_AUTH")))
+	tClient := twitch.NewClient("OziachBot", fmt.Sprintf("oauth:%s", os.Getenv("OZIACH_AUTH")))
 
-	// Here we perform all the setup needed for the Client:
-	// * Rooms to join
-	// * Callback setup
-	channels := []string{"solisrs"} // TODO: delete after quick test
-	bot := OziachBot{client, channels}
+	// DynamoDB client connection
+	credentialProvider := &credentials.EnvProvider{}
+	credentials := credentials.NewCredentials(credentialProvider)
+	dbConfig := aws.NewConfig().WithCredentials(credentials).WithRegion("us-west-1")
+	session := session.New(dbConfig)
+	dbClient := dynamodb.New(session)
 
-	client.OnNewMessage(bot.HandleMessage)
+	tableName := "ob-channels"
+	scanInput := &dynamodb.ScanInput{
+		TableName: &tableName,
+	}
 
-	for _, channel := range channels {
-		client.Join(channel)
+	result, err := dbClient.Scan(scanInput)
+	if err != nil {
+		panic(err)
+	}
+
+	bot := OziachBot{
+		TwitchClient:   tClient,
+		dynamoDBClient: dbClient,
+	}
+
+	tClient.OnNewMessage(bot.HandleMessage)
+
+	for _, item := range result.Items {
+		channel := Channel{}
+		dynamodbattribute.UnmarshalMap(item, &channel)
+		tClient.Join(channel.Name)
 	}
 
 	return bot
@@ -35,7 +63,7 @@ func InitBot() OziachBot {
 
 // Connect Connects OziachBot to Twitch IRC
 func (bot *OziachBot) Connect() error {
-	return bot.Client.Connect()
+	return bot.TwitchClient.Connect()
 }
 
 // HandleMessage Main callback method to wrap all actions on a PRIVMSG
@@ -74,5 +102,5 @@ func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message tw
 // Say Wrapper for Client.Say that prefixes the text with "/me"
 func (bot *OziachBot) Say(channel, text string) {
 	formattedText := fmt.Sprintf("/me %s", text)
-	bot.Client.Say(channel, formattedText)
+	bot.TwitchClient.Say(channel, formattedText)
 }

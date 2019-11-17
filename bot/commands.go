@@ -30,7 +30,7 @@ func (bot *OziachBot) HandleSkillLookup(channel string, user twitch.User, skillN
 		return err2
 	}
 
-	bot.Client.Say(channel, fmt.Sprintf(
+	bot.TwitchClient.Say(channel, fmt.Sprintf(
 		"/me @%s - %s | %s level: %s | Rank (%s): %s | Exp: %s",
 		user.DisplayName,
 		player,
