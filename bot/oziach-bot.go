@@ -4,19 +4,23 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/aws/aws-sdk-go/service/dynamodbstreams"
 	"github.com/gempir/go-twitch-irc"
 )
 
 // OziachBot Wrapper class for twitch.Client that encompasses all OziachBot features
 type OziachBot struct {
-	TwitchClient   *twitch.Client
-	dynamoDBClient *dynamodb.DynamoDB
+	TwitchClient *twitch.Client
+	dbClient     *dynamodb.DynamoDB
+	dbStream     *dynamodbstreams.DynamoDBStreams
+	streamArn    string
 }
 
 // Channel DynamoDB schema for channel records
@@ -33,21 +37,24 @@ func InitBot() OziachBot {
 	credentials := credentials.NewCredentials(credentialProvider)
 	dbConfig := aws.NewConfig().WithCredentials(credentials).WithRegion("us-west-1")
 	session := session.New(dbConfig)
-	dbClient := dynamodb.New(session)
+	dClient := dynamodb.New(session)
+	dStream := dynamodbstreams.New(session)
 
 	tableName := "ob-channels"
 	scanInput := &dynamodb.ScanInput{
 		TableName: &tableName,
 	}
 
-	result, err := dbClient.Scan(scanInput)
+	result, err := dClient.Scan(scanInput)
 	if err != nil {
 		panic(err)
 	}
 
 	bot := OziachBot{
-		TwitchClient:   tClient,
-		dynamoDBClient: dbClient,
+		TwitchClient: tClient,
+		dbClient:     dClient,
+		dbStream:     dStream,
+		streamArn:    os.Getenv("OZIACH_CHANNEL_DB"),
 	}
 
 	tClient.OnNewMessage(bot.HandleMessage)
@@ -58,7 +65,121 @@ func InitBot() OziachBot {
 		tClient.Join(channel.Name)
 	}
 
+	go bot.listenForChanges()
+
 	return bot
+}
+
+// GetLatestShardIterator Gets the shard iterator pointing to the latest record in the stream
+func (bot *OziachBot) GetLatestShardIterator() (shardID, shardIterator *string, err error) {
+	dsi := (&dynamodbstreams.DescribeStreamInput{})
+	dsi.SetStreamArn(bot.streamArn)
+	desc, err := bot.dbStream.DescribeStream(dsi)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	shard := desc.StreamDescription.Shards[0]
+
+	iterInput := (&dynamodbstreams.GetShardIteratorInput{
+		ShardId: shard.ShardId,
+	})
+	iterInput = iterInput.SetShardIteratorType(dynamodbstreams.ShardIteratorTypeLatest)
+	iterInput = iterInput.SetStreamArn(bot.streamArn)
+	shardIteratorOutput, err := bot.dbStream.GetShardIterator(iterInput)
+	return shard.ShardId, shardIteratorOutput.ShardIterator, err
+}
+
+func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator *string, f func(record *dynamodbstreams.Record)) error {
+	if shardIterator != nil {
+		gri := &dynamodbstreams.GetRecordsInput{
+			ShardIterator: shardIterator,
+		}
+		recordOutput, err := bot.dbStream.GetRecords(gri)
+
+		if err != nil {
+			return err
+		}
+
+		for _, record := range recordOutput.Records {
+			f(record)
+		}
+
+		*shardIterator = *recordOutput.NextShardIterator
+	}
+
+	if shardIterator == nil {
+		dsi := (&dynamodbstreams.DescribeStreamInput{})
+		dsi.SetStreamArn(bot.streamArn)
+		dsi.SetExclusiveStartShardId(*shardID)
+		desc, err := bot.dbStream.DescribeStream(dsi)
+
+		if err != nil {
+			return err
+		}
+
+		shards := desc.StreamDescription.Shards[1:]
+
+		for _, shard := range shards {
+			*shardID = *shard.ShardId
+			iterInput := (&dynamodbstreams.GetShardIteratorInput{})
+			iterInput = iterInput.SetShardId(*shardID)
+			iterInput = iterInput.SetShardIteratorType(dynamodbstreams.ShardIteratorTypeTrimHorizon)
+			iterInput = iterInput.SetStreamArn(bot.streamArn)
+			shardIteratorOutput, err := bot.dbStream.GetShardIterator(iterInput)
+
+			if err != nil {
+				return err
+			}
+
+			shardIterator = shardIteratorOutput.ShardIterator
+			gri := &dynamodbstreams.GetRecordsInput{
+				ShardIterator: shardIterator,
+			}
+			recordOutput, err := bot.dbStream.GetRecords(gri)
+
+			if err != nil {
+				return err
+			}
+
+			for _, record := range recordOutput.Records {
+				f(record)
+			}
+			*shardIterator = *recordOutput.NextShardIterator
+		}
+	}
+
+	return nil
+}
+
+func (bot *OziachBot) listenForChanges() {
+	shardID, shardIterator, err := bot.GetLatestShardIterator()
+	tick := time.Tick(10 * time.Second)
+
+	if err != nil {
+		for range tick {
+			shardID, shardIterator, err = bot.GetLatestShardIterator()
+
+			if err == nil {
+				break
+			}
+		}
+	}
+
+	for range tick {
+		bot.mapFuncToStreamOutput(shardID, shardIterator, func(record *dynamodbstreams.Record) {
+			channel := Channel{}
+			switch *record.EventName {
+			case dynamodbstreams.OperationTypeInsert:
+				dynamodbattribute.UnmarshalMap(record.Dynamodb.NewImage, &channel)
+				bot.TwitchClient.Join(channel.Name)
+			case dynamodbstreams.OperationTypeRemove:
+				dynamodbattribute.UnmarshalMap(record.Dynamodb.OldImage, &channel)
+				bot.TwitchClient.Depart(channel.Name)
+			}
+		})
+	}
 }
 
 // Connect Connects OziachBot to Twitch IRC
