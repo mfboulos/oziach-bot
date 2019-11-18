@@ -4,184 +4,215 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/aws/aws-sdk-go/service/dynamodbstreams"
+	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
 	"github.com/gempir/go-twitch-irc"
 )
 
-// OziachBot Wrapper class for twitch.Client that encompasses all OziachBot features
+var (
+	// TableName Name of the table holding Channel records in DynamoDB
+	TableName string = "ob-channels"
+)
+
+// OziachBot Object structure containing all necessary clients and connections
+// for OziachBot
 type OziachBot struct {
 	TwitchClient *twitch.Client
-	dbClient     *dynamodb.DynamoDB
-	dbStream     *dynamodbstreams.DynamoDBStreams
-	streamArn    string
+	ChannelDB    *dynamodb.DynamoDB
 }
 
 // Channel DynamoDB schema for channel records
 type Channel struct {
-	Name string
+	Name        string
+	IsConnected bool
+}
+
+// UnmarshalChannel Convenience method to unmarshal a DynamoDB record directly
+// into a Channel object
+func UnmarshalChannel(item map[string]*dynamodb.AttributeValue) (Channel, error) {
+	channel := Channel{}
+	err := dynamodbattribute.UnmarshalMap(item, &channel)
+	return channel, err
+}
+
+// UpdateChannel Updates an existing Channel record in the DB based on the given Expression
+func (bot *OziachBot) UpdateChannel(name string, expr expression.Expression) (Channel, error) {
+	// Anonymous struct with just the channel name
+	channelKey := struct {
+		Name string
+	}{Name: name}
+
+	marshalledKey, err := dynamodbattribute.MarshalMap(channelKey)
+
+	if err != nil {
+		return Channel{}, err
+	}
+
+	existsExpression, err := expression.NewBuilder().WithCondition(
+		expression.Name("Name").AttributeExists(),
+	).Build()
+
+	if err != nil {
+		return Channel{}, err
+	}
+
+	updateItemInput := &dynamodb.UpdateItemInput{}
+	updateItemInput.SetTableName(TableName)
+	updateItemInput.SetConditionExpression(*existsExpression.Condition())
+	updateItemInput.SetReturnValues(dynamodb.ReturnValueAllNew)
+	updateItemInput.SetKey(marshalledKey)
+	updateItemInput.SetUpdateExpression(*expr.Update())
+	output, err := bot.ChannelDB.UpdateItem(updateItemInput)
+
+	if err != nil {
+		return Channel{}, err
+	}
+
+	return UnmarshalChannel(output.Attributes)
+}
+
+// AddChannel Adds a new channel by name to the channel DB. Fails if a record
+// with that Name already exists
+func (bot *OziachBot) AddChannel(name string) (Channel, error) {
+	channel := Channel{Name: name}
+	marshalledChannel, err := dynamodbattribute.MarshalMap(channel)
+
+	if err != nil {
+		return channel, err
+	}
+
+	expression, err := expression.NewBuilder().WithCondition(
+		expression.Name("Name").AttributeNotExists(),
+	).Build()
+
+	if err != nil {
+		return channel, err
+	}
+
+	putItemInput := &dynamodb.PutItemInput{}
+	putItemInput.SetTableName(TableName)
+	putItemInput.SetItem(marshalledChannel)
+	putItemInput.SetConditionExpression(*expression.Condition())
+	_, err = bot.ChannelDB.PutItem(putItemInput)
+
+	return channel, err
+}
+
+// GetChannel Gets the channel record by primary ID (Name)
+func (bot *OziachBot) GetChannel(name string) (Channel, error) {
+	// Anonymous struct with just the channel name
+	channelKey := struct {
+		Name string
+	}{Name: name}
+	marshalledKey, err := dynamodbattribute.MarshalMap(channelKey)
+
+	if err != nil {
+		return Channel{}, err
+	}
+
+	getItemInput := &dynamodb.GetItemInput{}
+	getItemInput.SetTableName(TableName)
+	getItemInput.SetKey(marshalledKey)
+	output, err := bot.ChannelDB.GetItem(getItemInput)
+
+	if err != nil {
+		return Channel{}, err
+	}
+
+	return UnmarshalChannel(output.Item)
+}
+
+// DisconnectFromChannel Updates the record corresponding to the named channel by
+// setting IsConnected to false, then OziachBot departs from the channel. Does not
+// delete the DB record
+func (bot *OziachBot) DisconnectFromChannel(name string) error {
+	// Expression to set IsConnected to false
+	expression, err := expression.NewBuilder().WithUpdate(
+		expression.Set(expression.Name("IsConnected"), expression.Value(false)),
+	).Build()
+
+	if err != nil {
+		return err
+	}
+
+	channel, err := bot.UpdateChannel(name, expression)
+
+	if err == nil {
+		bot.TwitchClient.Depart(channel.Name)
+	}
+
+	return err
+}
+
+// ConnectToChannel Adds a new channel record to the DB if it does not yet exist.
+// Otherwise, updates the existing channel by setting IsConnected to true. Then
+// OziachBot joins the channel
+func (bot *OziachBot) ConnectToChannel(name string) error {
+	channel, err := bot.AddChannel(name)
+
+	if err != nil {
+		// Expression to set IsConnected to false
+		expression, err := expression.NewBuilder().WithUpdate(
+			expression.Set(expression.Name("IsConnected"), expression.Value(true)),
+		).Build()
+
+		if err != nil {
+			return err
+		}
+
+		channel, err = bot.UpdateChannel(name, expression)
+	}
+
+	if err == nil {
+		bot.TwitchClient.Join(channel.Name)
+	}
+
+	return err
 }
 
 // InitBot Initalizes OziachBot with callbacks and channels it needs to join
 func InitBot() OziachBot {
-	tClient := twitch.NewClient("OziachBot", fmt.Sprintf("oauth:%s", os.Getenv("OZIACH_AUTH")))
+	// Twitch IRC client configuration
+	twitchClient := twitch.NewClient(
+		"OziachBot",
+		fmt.Sprintf("oauth:%s", os.Getenv("OZIACH_AUTH")),
+	)
 
 	// DynamoDB client connection
 	credentialProvider := &credentials.EnvProvider{}
 	credentials := credentials.NewCredentials(credentialProvider)
 	dbConfig := aws.NewConfig().WithCredentials(credentials).WithRegion("us-west-1")
 	session := session.New(dbConfig)
-	dClient := dynamodb.New(session)
-	dStream := dynamodbstreams.New(session)
+	dbClient := dynamodb.New(session)
 
-	tableName := "ob-channels"
-	scanInput := &dynamodb.ScanInput{
-		TableName: &tableName,
-	}
-
-	result, err := dClient.Scan(scanInput)
+	// Read all records from channel DB
+	scanInput := &dynamodb.ScanInput{TableName: &TableName}
+	result, err := dbClient.Scan(scanInput)
 	if err != nil {
 		panic(err)
 	}
 
-	bot := OziachBot{
-		TwitchClient: tClient,
-		dbClient:     dClient,
-		dbStream:     dStream,
-		streamArn:    os.Getenv("OZIACH_CHANNEL_DB"),
-	}
-
-	tClient.OnNewMessage(bot.HandleMessage)
-
+	// Join all rooms from the DB query
 	for _, item := range result.Items {
-		channel := Channel{}
-		dynamodbattribute.UnmarshalMap(item, &channel)
-		tClient.Join(channel.Name)
+		channel, err := UnmarshalChannel(item)
+		if err != nil {
+			panic(err)
+		}
+		twitchClient.Join(channel.Name)
 	}
 
-	go bot.listenForChanges()
+	bot := OziachBot{
+		TwitchClient: twitchClient,
+		ChannelDB:    dbClient,
+	}
 
+	bot.TwitchClient.OnNewMessage(bot.HandleMessage)
 	return bot
-}
-
-// GetLatestShardIterator Gets the shard iterator pointing to the latest record in the stream
-func (bot *OziachBot) GetLatestShardIterator() (shardID, shardIterator *string, err error) {
-	dsi := (&dynamodbstreams.DescribeStreamInput{})
-	dsi.SetStreamArn(bot.streamArn)
-	desc, err := bot.dbStream.DescribeStream(dsi)
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	shard := desc.StreamDescription.Shards[0]
-
-	iterInput := (&dynamodbstreams.GetShardIteratorInput{
-		ShardId: shard.ShardId,
-	})
-	iterInput = iterInput.SetShardIteratorType(dynamodbstreams.ShardIteratorTypeLatest)
-	iterInput = iterInput.SetStreamArn(bot.streamArn)
-	shardIteratorOutput, err := bot.dbStream.GetShardIterator(iterInput)
-	return shard.ShardId, shardIteratorOutput.ShardIterator, err
-}
-
-func (bot *OziachBot) mapFuncToStreamOutput(shardID, shardIterator **string, f func(record *dynamodbstreams.Record)) error {
-	if *shardIterator != nil {
-		gri := &dynamodbstreams.GetRecordsInput{
-			ShardIterator: *shardIterator,
-		}
-		recordOutput, err := bot.dbStream.GetRecords(gri)
-
-		if err != nil {
-			return err
-		}
-
-		for _, record := range recordOutput.Records {
-			f(record)
-		}
-
-		*shardIterator = recordOutput.NextShardIterator
-	}
-
-	if *shardIterator == nil {
-		dsi := (&dynamodbstreams.DescribeStreamInput{
-			ExclusiveStartShardId: *shardID,
-		})
-		dsi.SetStreamArn(bot.streamArn)
-		desc, err := bot.dbStream.DescribeStream(dsi)
-
-		if err != nil {
-			return err
-		}
-
-		shards := desc.StreamDescription.Shards[1:]
-
-		for _, shard := range shards {
-			*shardID = shard.ShardId
-			iterInput := (&dynamodbstreams.GetShardIteratorInput{
-				ShardId: *shardID,
-			})
-			iterInput = iterInput.SetShardIteratorType(dynamodbstreams.ShardIteratorTypeTrimHorizon)
-			iterInput = iterInput.SetStreamArn(bot.streamArn)
-			shardIteratorOutput, err := bot.dbStream.GetShardIterator(iterInput)
-
-			if err != nil {
-				return err
-			}
-
-			*shardIterator = shardIteratorOutput.ShardIterator
-			gri := &dynamodbstreams.GetRecordsInput{
-				ShardIterator: *shardIterator,
-			}
-			recordOutput, err := bot.dbStream.GetRecords(gri)
-
-			if err != nil {
-				return err
-			}
-
-			for _, record := range recordOutput.Records {
-				f(record)
-			}
-			*shardIterator = recordOutput.NextShardIterator
-		}
-	}
-
-	return nil
-}
-
-func (bot *OziachBot) listenForChanges() {
-	shardID, shardIterator, err := bot.GetLatestShardIterator()
-	tick := time.Tick(10 * time.Second)
-
-	if err != nil {
-		for range tick {
-			shardID, shardIterator, err = bot.GetLatestShardIterator()
-
-			if err == nil {
-				break
-			}
-		}
-	}
-
-	for range tick {
-		bot.mapFuncToStreamOutput(&shardID, &shardIterator, func(record *dynamodbstreams.Record) {
-			channel := Channel{}
-			switch *record.EventName {
-			case dynamodbstreams.OperationTypeInsert:
-				dynamodbattribute.UnmarshalMap(record.Dynamodb.NewImage, &channel)
-				bot.TwitchClient.Join(channel.Name)
-			case dynamodbstreams.OperationTypeRemove:
-				dynamodbattribute.UnmarshalMap(record.Dynamodb.OldImage, &channel)
-				bot.TwitchClient.Depart(channel.Name)
-			}
-		})
-	}
 }
 
 // Connect Connects OziachBot to Twitch IRC
