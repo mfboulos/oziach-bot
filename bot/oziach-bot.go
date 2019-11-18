@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -40,8 +41,30 @@ func UnmarshalChannel(item map[string]*dynamodb.AttributeValue) (Channel, error)
 	return channel, err
 }
 
-// UpdateChannel Updates an existing Channel record in the DB based on the given Expression
-func (bot *OziachBot) UpdateChannel(name string, expr expression.Expression) (Channel, error) {
+// ChannelNotFoundError Returned when an operation requires an existing channel
+// that isn't found
+type ChannelNotFoundError struct {
+	Channel string
+}
+
+func (e ChannelNotFoundError) Error() string {
+	return fmt.Sprintf("Channel %s not found", e.Channel)
+}
+
+// ChannelAlreadyExistsError Returned when an operation requires a channel to
+// be new, but it already exists
+type ChannelAlreadyExistsError struct {
+	Channel string
+}
+
+func (e ChannelAlreadyExistsError) Error() string {
+	return fmt.Sprintf("Channel %s already exists", e.Channel)
+}
+
+// UpdateChannel Updates an existing Channel record in the DB. Builds an expression
+// based on the given builder by adding attribute existence check on the primary key.
+// Returns ChannelNotFoundError if the existence check fails
+func (bot *OziachBot) UpdateChannel(name string, builder expression.Builder) (Channel, error) {
 	// Anonymous struct with just the channel name
 	channelKey := struct {
 		Name string
@@ -53,7 +76,7 @@ func (bot *OziachBot) UpdateChannel(name string, expr expression.Expression) (Ch
 		return Channel{}, err
 	}
 
-	existsExpression, err := expression.NewBuilder().WithCondition(
+	expression, err := builder.WithCondition(
 		expression.Name("Name").AttributeExists(),
 	).Build()
 
@@ -61,15 +84,25 @@ func (bot *OziachBot) UpdateChannel(name string, expr expression.Expression) (Ch
 		return Channel{}, err
 	}
 
-	updateItemInput := &dynamodb.UpdateItemInput{}
+	updateItemInput := &dynamodb.UpdateItemInput{
+		ExpressionAttributeNames:  expression.Names(),
+		ExpressionAttributeValues: expression.Values(),
+		ConditionExpression:       expression.Condition(),
+		UpdateExpression:          expression.Update(),
+	}
 	updateItemInput.SetTableName(TableName)
-	updateItemInput.SetConditionExpression(*existsExpression.Condition())
 	updateItemInput.SetReturnValues(dynamodb.ReturnValueAllNew)
 	updateItemInput.SetKey(marshalledKey)
-	updateItemInput.SetUpdateExpression(*expr.Update())
 	output, err := bot.ChannelDB.UpdateItem(updateItemInput)
 
 	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodb.ErrCodeConditionalCheckFailedException:
+				err = ChannelNotFoundError{name}
+			}
+		}
+
 		return Channel{}, err
 	}
 
@@ -79,7 +112,10 @@ func (bot *OziachBot) UpdateChannel(name string, expr expression.Expression) (Ch
 // AddChannel Adds a new channel by name to the channel DB. Fails if a record
 // with that Name already exists
 func (bot *OziachBot) AddChannel(name string) (Channel, error) {
-	channel := Channel{Name: name}
+	channel := Channel{
+		Name:        name,
+		IsConnected: true,
+	}
 	marshalledChannel, err := dynamodbattribute.MarshalMap(channel)
 
 	if err != nil {
@@ -94,11 +130,23 @@ func (bot *OziachBot) AddChannel(name string) (Channel, error) {
 		return channel, err
 	}
 
-	putItemInput := &dynamodb.PutItemInput{}
+	putItemInput := &dynamodb.PutItemInput{
+		ExpressionAttributeNames:  expression.Names(),
+		ExpressionAttributeValues: expression.Values(),
+		ConditionExpression:       expression.Condition(),
+	}
 	putItemInput.SetTableName(TableName)
 	putItemInput.SetItem(marshalledChannel)
-	putItemInput.SetConditionExpression(*expression.Condition())
 	_, err = bot.ChannelDB.PutItem(putItemInput)
+
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodb.ErrCodeConditionalCheckFailedException:
+				err = ChannelAlreadyExistsError{name}
+			}
+		}
+	}
 
 	return channel, err
 }
@@ -120,8 +168,10 @@ func (bot *OziachBot) GetChannel(name string) (Channel, error) {
 	getItemInput.SetKey(marshalledKey)
 	output, err := bot.ChannelDB.GetItem(getItemInput)
 
-	if err != nil {
-		return Channel{}, err
+	// GetItem doesn't set Item if it doesn't find anything, so
+	// we check for a "zero map"
+	if len(output.Item) == 0 {
+		return Channel{}, ChannelNotFoundError{name}
 	}
 
 	return UnmarshalChannel(output.Item)
@@ -131,16 +181,12 @@ func (bot *OziachBot) GetChannel(name string) (Channel, error) {
 // setting IsConnected to false, then OziachBot departs from the channel. Does not
 // delete the DB record
 func (bot *OziachBot) DisconnectFromChannel(name string) error {
-	// Expression to set IsConnected to false
-	expression, err := expression.NewBuilder().WithUpdate(
+	// Expression builder to set IsConnected to false
+	builder := expression.NewBuilder().WithUpdate(
 		expression.Set(expression.Name("IsConnected"), expression.Value(false)),
-	).Build()
+	)
 
-	if err != nil {
-		return err
-	}
-
-	channel, err := bot.UpdateChannel(name, expression)
+	channel, err := bot.UpdateChannel(name, builder)
 
 	if err == nil {
 		bot.TwitchClient.Depart(channel.Name)
@@ -156,16 +202,12 @@ func (bot *OziachBot) ConnectToChannel(name string) error {
 	channel, err := bot.AddChannel(name)
 
 	if err != nil {
-		// Expression to set IsConnected to false
-		expression, err := expression.NewBuilder().WithUpdate(
+		// Expression builder to set IsConnected to true
+		builder := expression.NewBuilder().WithUpdate(
 			expression.Set(expression.Name("IsConnected"), expression.Value(true)),
-		).Build()
+		)
 
-		if err != nil {
-			return err
-		}
-
-		channel, err = bot.UpdateChannel(name, expression)
+		channel, err = bot.UpdateChannel(name, builder)
 	}
 
 	if err == nil {
@@ -212,6 +254,7 @@ func InitBot() OziachBot {
 	}
 
 	bot.TwitchClient.OnNewMessage(bot.HandleMessage)
+	go bot.ServeAPI()
 	return bot
 }
 

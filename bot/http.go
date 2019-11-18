@@ -1,0 +1,90 @@
+package bot
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	"github.com/gorilla/mux"
+)
+
+// HTTPMessage Converts a string message into a byte array JSON string with key "message"
+func HTTPMessage(message string) []byte {
+	return []byte(fmt.Sprintf(`{"message": "%s"}`, message))
+}
+
+// APIGetChannel Endpoint handler function to route to GetChannel
+func (bot *OziachBot) APIGetChannel(w http.ResponseWriter, r *http.Request) {
+	pathParams := mux.Vars(r)
+	w.Header().Set("Content-Type", "application/json")
+
+	if name, ok := pathParams["channel"]; ok {
+		channel, err := bot.GetChannel(name)
+
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write(HTTPMessage(err.Error()))
+		} else {
+			json, err := json.Marshal(channel)
+
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write(HTTPMessage(err.Error()))
+			} else {
+				w.Write(json)
+			}
+		}
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(HTTPMessage("Bad request format: /channel/{channel} required"))
+	}
+}
+
+// APIConnectToChannel Endpoint handler function to route to ConnectToChannel
+func (bot *OziachBot) APIConnectToChannel(w http.ResponseWriter, r *http.Request) {
+	pathParams := mux.Vars(r)
+	w.Header().Set("Content-Type", "application/json")
+
+	if name, ok := pathParams["channel"]; ok {
+		err := bot.ConnectToChannel(name)
+
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write(HTTPMessage(err.Error()))
+		}
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(HTTPMessage("Bad request format: /channel/{channel} required"))
+	}
+}
+
+// APIDisconnectFromChannel Endpoint handler function to route to DisconnectFromChannel
+func (bot *OziachBot) APIDisconnectFromChannel(w http.ResponseWriter, r *http.Request) {
+	pathParams := mux.Vars(r)
+	w.Header().Set("Content-Type", "application/json")
+
+	if name, ok := pathParams["channel"]; ok {
+		err := bot.DisconnectFromChannel(name)
+
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write(HTTPMessage(err.Error()))
+		}
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(HTTPMessage("Bad request format: /channel/{channel} required"))
+	}
+}
+
+// ServeAPI Serves OziachBot's API
+func (bot *OziachBot) ServeAPI() error {
+	router := mux.NewRouter()
+	channelAPI := router.PathPrefix("/oziachbot").Subrouter()
+
+	// Configure all endpoints in the channel API
+	channelAPI.HandleFunc("/channel/{channel}", bot.APIGetChannel).Methods(http.MethodGet)
+	channelAPI.HandleFunc("/channel/{channel}", bot.APIConnectToChannel).Methods(http.MethodPost)
+	channelAPI.HandleFunc("/channel/{channel}", bot.APIDisconnectFromChannel).Methods(http.MethodDelete)
+
+	return http.ListenAndServe(":7373", router)
+}

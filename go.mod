@@ -6,4 +6,5 @@ require (
 	github.com/aws/aws-sdk-go v1.25.36
 	github.com/dustin/go-humanize v1.0.0
 	github.com/gempir/go-twitch-irc v1.1.0
+	github.com/gorilla/mux v1.7.3
 )
