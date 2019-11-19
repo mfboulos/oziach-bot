@@ -76,9 +76,19 @@ func (bot *OziachBot) APIDisconnectFromChannel(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// Heartbeat Returns "ok" to validate the health of the application
+func Heartbeat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
 // ServeAPI Serves OziachBot's API
 func (bot *OziachBot) ServeAPI() error {
 	router := mux.NewRouter()
+	// Health check for load balancer
+	router.HandleFunc("/", Heartbeat).Methods(http.MethodGet, http.MethodHead)
+
 	channelAPI := router.PathPrefix("/oziachbot").Subrouter()
 
 	// Configure all endpoints in the channel API
