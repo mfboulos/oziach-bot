@@ -1,6 +1,7 @@
 {
-  "ipcMode": null,
+  "family": "ob-task-definition",
   "executionRoleArn": "arn:aws:iam::442545936717:role/ecsTaskExecutionRole",
+  "networkMode": "awsvpc",
   "containerDefinitions": [
     {
       "logConfiguration": {
@@ -17,6 +18,11 @@
           "hostPort": 80,
           "protocol": "tcp",
           "containerPort": 80
+        },
+        {
+          "hostPort": 7373,
+          "protocol": "tcp",
+          "containerPort": 7373
         }
       ],
       "command": [],
@@ -31,13 +37,11 @@
       "name": "nginx"
     }
   ],
+  "volumes": [],
   "placementConstraints": [],
-  "memory": "512",
-  "family": "ob-task-definition",
   "requiresCompatibilities": [
     "FARGATE"
   ],
-  "networkMode": "awsvpc",
   "cpu": "256",
-  "volumes": []
+  "memory": "512"
 }
