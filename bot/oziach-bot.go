@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"os"
+	"log"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -254,7 +255,7 @@ func InitBot() OziachBot {
 	}
 
 	bot.TwitchClient.OnNewMessage(bot.HandleMessage)
-	go bot.ServeAPI()
+	go log.Fatal(bot.ServeAPI())
 	return bot
 }
 
