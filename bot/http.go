@@ -3,6 +3,7 @@ package bot
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -84,7 +85,7 @@ func Heartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeAPI Serves OziachBot's API
-func (bot *OziachBot) ServeAPI() error {
+func (bot *OziachBot) ServeAPI() {
 	router := mux.NewRouter()
 	// Health check for load balancer
 	router.HandleFunc("/", Heartbeat).Methods(http.MethodGet, http.MethodHead)
@@ -96,5 +97,5 @@ func (bot *OziachBot) ServeAPI() error {
 	channelAPI.HandleFunc("/channel/{channel}", bot.APIConnectToChannel).Methods(http.MethodPost)
 	channelAPI.HandleFunc("/channel/{channel}", bot.APIDisconnectFromChannel).Methods(http.MethodDelete)
 
-	return http.ListenAndServe(":7373", router)
+	log.Fatal(http.ListenAndServe(":7373", router))
 }
