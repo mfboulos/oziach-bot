@@ -187,10 +187,14 @@ func (bot *OziachBot) DisconnectFromChannel(name string) error {
 		expression.Set(expression.Name("IsConnected"), expression.Value(false)),
 	)
 
+	log.Println("Attempting to disconnect from", name)
 	channel, err := bot.UpdateChannel(name, builder)
 
 	if err == nil {
 		bot.TwitchClient.Depart(channel.Name)
+		log.Println("Disconnect successful")
+	} else {
+		log.Println("Disconnect failed")
 	}
 
 	return err
@@ -200,6 +204,7 @@ func (bot *OziachBot) DisconnectFromChannel(name string) error {
 // Otherwise, updates the existing channel by setting IsConnected to true. Then
 // OziachBot joins the channel
 func (bot *OziachBot) ConnectToChannel(name string) error {
+	log.Println("Attempting to connect to", name)
 	channel, err := bot.AddChannel(name)
 
 	if err != nil {
@@ -213,6 +218,9 @@ func (bot *OziachBot) ConnectToChannel(name string) error {
 
 	if err == nil {
 		bot.TwitchClient.Join(channel.Name)
+		log.Println("Connection successful")
+	} else {
+		log.Println("Connection failed")
 	}
 
 	return err
@@ -226,6 +234,7 @@ func InitBot() OziachBot {
 		fmt.Sprintf("oauth:%s", os.Getenv("OZIACH_AUTH")),
 	)
 
+	log.Println("Connecting to DynamoDB")
 	// DynamoDB client connection
 	credentialProvider := &credentials.EnvProvider{}
 	credentials := credentials.NewCredentials(credentialProvider)
@@ -233,6 +242,7 @@ func InitBot() OziachBot {
 	session := session.New(dbConfig)
 	dbClient := dynamodb.New(session)
 
+	log.Println("Reading channels from DB")
 	// Read all records from channel DB
 	scanInput := &dynamodb.ScanInput{TableName: &TableName}
 	result, err := dbClient.Scan(scanInput)
@@ -240,6 +250,7 @@ func InitBot() OziachBot {
 		panic(err)
 	}
 
+	log.Println("Joining channels")
 	// Join all rooms from the DB query
 	for _, item := range result.Items {
 		channel, err := UnmarshalChannel(item)
@@ -261,11 +272,13 @@ func InitBot() OziachBot {
 
 // Connect Connects OziachBot to Twitch IRC
 func (bot *OziachBot) Connect() error {
+	log.Println("Connecting to Twitch IRC")
 	return bot.TwitchClient.Connect()
 }
 
 // HandleMessage Main callback method to wrap all actions on a PRIVMSG
 func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message twitch.Message) {
+	log.Printf("Handing message \"%s\" from channel %s\n", message.Text, channel)
 	idx := strings.Index(message.Text, " ")
 	if idx == -1 {
 		idx = len(message.Text)
