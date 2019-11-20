@@ -10,7 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/gempir/go-twitch-irc"
+
 	"github.com/mfboulos/oziachbot/bot"
+	"github.com/mfboulos/oziachbot/hiscores"
 )
 
 func main() {
@@ -36,6 +38,7 @@ func main() {
 		ChannelDB: &bot.DynamoDBChannelDatabase{
 			Client: dbClient,
 		},
+		HiscoreAPI: hiscores.NewOSRSHiscoreAPI(),
 	}
 	go oziachBot.ServeAPI()
 

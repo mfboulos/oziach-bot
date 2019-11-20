@@ -1,14 +1,16 @@
-package hiscores
+package hiscores_test
 
 import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/mfboulos/oziachbot/hiscores"
 )
 
-type mockHiscoreAPI struct{}
+type mockHiscoreAPIClient struct{}
 
-func (mock mockHiscoreAPI) GetHiscoresAPIResponse(player string, mode GameMode) (string, error) {
+func (mock mockHiscoreAPIClient) GetAPIResponse(player string, mode hiscores.GameMode) (string, error) {
 	mockScores := []string{
 		"1140740,922,26362111", // Skills start here
 		"1600556,50,102080",
@@ -46,20 +48,20 @@ func (mock mockHiscoreAPI) GetHiscoresAPIResponse(player string, mode GameMode) 
 		"-1,-1",
 	}
 
-	if player == fallenHardcoreAccount && mode != hardcoreIronman {
+	if player == fallenHardcoreAccount && mode != hiscores.GameModeHardcoreIronman {
 		mockScores[0] = mockScores[0] + "9"
 	}
 
 	var isValid bool
 
 	switch mode {
-	case ultimateIronman:
+	case hiscores.GameModeUltimateIronman:
 		isValid = false
-	case hardcoreIronman:
+	case hiscores.GameModeHardcoreIronman:
 		isValid = player == hardcoreAccount || player == fallenHardcoreAccount
-	case ironman:
+	case hiscores.GameModeIronman:
 		isValid = player != notAnAccount && player != normalAccount
-	case normal:
+	case hiscores.GameModeNormal:
 		isValid = player != notAnAccount
 	}
 
@@ -67,7 +69,7 @@ func (mock mockHiscoreAPI) GetHiscoresAPIResponse(player string, mode GameMode) 
 		return strings.Join(mockScores, " "), nil
 	}
 
-	return "", &HiscoreAPIError{player, mode}
+	return "", &hiscores.HiscoreAPIError{player, mode}
 }
 
 const (
@@ -78,32 +80,93 @@ const (
 	notAnAccount          string = "Invalid Account"
 )
 
+func NewMockAPI() *hiscores.HiscoreAPI {
+	return &hiscores.HiscoreAPI{
+		Client: &mockHiscoreAPIClient{},
+	}
+}
+
+func TestNewOSRSHiscoreAPI(t *testing.T) {
+	api := hiscores.NewOSRSHiscoreAPI()
+
+	// We consider the API object to be valid if it uses the Hiscore API
+	// client provided by the hiscores package
+	if _, ok := api.Client.(*hiscores.OSRSHiscoreAPIClient); !ok {
+		t.Fatalf("New OSRS Hiscore API does not use OSRS Hiscore API Client")
+	}
+}
+
+func TestFormatHiscoreAPIURL(t *testing.T) {
+	type urlFormatTestCase struct {
+		player   string
+		mode     hiscores.GameMode
+		expected string
+	}
+
+	testCases := []urlFormatTestCase{
+		urlFormatTestCase{
+			player: normalAccount,
+			mode:   hiscores.GameModeUltimateIronman,
+			expected: fmt.Sprintf(
+				"https://secure.runescape.com/m=hiscore_oldschool_ultimate/index_lite.ws?player=%s",
+				normalAccount,
+			),
+		},
+		urlFormatTestCase{
+			player: ironmanAccount,
+			mode:   hiscores.GameModeNormal,
+			expected: fmt.Sprintf(
+				"https://secure.runescape.com/m=hiscore_oldschool/index_lite.ws?player=%s",
+				ironmanAccount,
+			),
+		},
+		urlFormatTestCase{
+			player: notAnAccount,
+			mode:   hiscores.GameModeHardcoreIronman,
+			expected: fmt.Sprintf(
+				"https://secure.runescape.com/m=hiscore_oldschool_hardcore_ironman/index_lite.ws?player=%s",
+				notAnAccount,
+			),
+		},
+	}
+
+	for _, tc := range testCases {
+		actual := hiscores.FormatHiscoreAPIURL(tc.player, tc.mode)
+		if actual != tc.expected {
+			t.Errorf("Hiscore API URL was %s, expected %s",
+				actual,
+				tc.expected,
+			)
+		}
+	}
+}
+
 func TestHiscoresLookup(t *testing.T) {
-	mockAPI := mockHiscoreAPI{}
+	mockAPI := NewMockAPI()
 
 	t.Run("ByMode", func(t *testing.T) {
 		type hiscoreTestCase struct {
 			player     string
-			mode       GameMode
+			mode       hiscores.GameMode
 			shouldPass bool
 		}
 
 		testCaseMap := map[string][]hiscoreTestCase{
 			"SameMode": []hiscoreTestCase{
-				{normalAccount, normal, true},
-				{ironmanAccount, ironman, true},
-				{hardcoreAccount, hardcoreIronman, true},
+				{normalAccount, hiscores.GameModeNormal, true},
+				{ironmanAccount, hiscores.GameModeIronman, true},
+				{hardcoreAccount, hiscores.GameModeHardcoreIronman, true},
 			},
 			"LowerMode": []hiscoreTestCase{
-				{hardcoreAccount, normal, true},
-				{hardcoreAccount, ironman, true},
+				{hardcoreAccount, hiscores.GameModeNormal, true},
+				{hardcoreAccount, hiscores.GameModeIronman, true},
 			},
 			"InvalidPlayer": []hiscoreTestCase{
-				{notAnAccount, normal, false},
+				{notAnAccount, hiscores.GameModeNormal, false},
 			},
 			"IncompatibleMode": []hiscoreTestCase{
-				{hardcoreAccount, ultimateIronman, false},
-				{normalAccount, ironman, false},
+				{hardcoreAccount, hiscores.GameModeUltimateIronman, false},
+				{normalAccount, hiscores.GameModeIronman, false},
 			},
 		}
 
@@ -113,7 +176,7 @@ func TestHiscoresLookup(t *testing.T) {
 				for _, tc := range testCases {
 					t.Run(fmt.Sprintf("%s in %s Mode", tc.player, tc.mode.Name), func(t *testing.T) {
 						t.Parallel()
-						_, err := lookupHiscoresByGameMode(tc.player, tc.mode, mockAPI)
+						_, err := mockAPI.LookupHiscoresByGameMode(tc.player, tc.mode)
 
 						if err == nil && !tc.shouldPass {
 							t.Fatalf("Expected lookup failure, got success")
@@ -133,23 +196,23 @@ func TestHiscoresLookup(t *testing.T) {
 			t.Parallel()
 			player := notAnAccount
 
-			_, _, err := lookupHiscores(player, mockAPI)
+			_, _, err := mockAPI.LookupHiscores(player)
 
 			if err == nil {
 				t.Fatalf("Hiscore lookup succeeded for invalid player")
 			}
 		})
 
-		players := map[string]GameMode{
-			normalAccount:         normal,
-			ironmanAccount:        ironman,
-			hardcoreAccount:       hardcoreIronman,
-			fallenHardcoreAccount: ironman,
+		players := map[string]hiscores.GameMode{
+			normalAccount:         hiscores.GameModeNormal,
+			ironmanAccount:        hiscores.GameModeIronman,
+			hardcoreAccount:       hiscores.GameModeHardcoreIronman,
+			fallenHardcoreAccount: hiscores.GameModeIronman,
 		}
 
 		for player, expectedMode := range players {
 			t.Run(player, func(t *testing.T) {
-				_, actualMode, err := lookupHiscores(player, mockAPI)
+				_, actualMode, err := mockAPI.LookupHiscores(player)
 
 				if err != nil {
 					t.Fatalf("Hiscore lookup failed for valid player")
@@ -163,44 +226,11 @@ func TestHiscoresLookup(t *testing.T) {
 	})
 }
 
-func TestHiscoresLookupFailsWithInvalidPlayer(t *testing.T) {
-	player := notAnAccount
-	mockAPI := mockHiscoreAPI{}
-
-	_, _, err := lookupHiscores(player, mockAPI)
-
-	if err == nil {
-		t.Errorf("Hiscore lookup succeeded for invalid player")
-	}
-}
-
-func TestHiscoresLookupEvaluatesCorrectGameMode(t *testing.T) {
-	players := map[string]GameMode{
-		normalAccount:         normal,
-		ironmanAccount:        ironman,
-		hardcoreAccount:       hardcoreIronman,
-		fallenHardcoreAccount: ironman,
-	}
-	mockAPI := mockHiscoreAPI{}
-
-	for player, mode := range players {
-		_, mode2, err := lookupHiscores(player, mockAPI)
-
-		if err != nil {
-			t.Errorf("Hiscore lookup failed for valid player")
-		}
-
-		if mode != mode2 {
-			t.Errorf("Mismatched GameModes: expected %s, got %s", mode.Name, mode2.Name)
-		}
-	}
-}
-
 func TestGetSkillHiscoreFromName(t *testing.T) {
 	player := normalAccount
-	mode := normal
-	mockAPI := mockHiscoreAPI{}
-	hiscores, err := lookupHiscoresByGameMode(player, mode, mockAPI)
+	mode := hiscores.GameModeNormal
+	mockAPI := NewMockAPI()
+	hiscores, err := mockAPI.LookupHiscoresByGameMode(player, mode)
 
 	if err != nil {
 		t.Errorf("Hiscore lookup failed for valid player")

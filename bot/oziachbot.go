@@ -10,6 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
 	"github.com/gempir/go-twitch-irc"
+
+	"github.com/mfboulos/oziachbot/hiscores"
 )
 
 var (
@@ -27,6 +29,7 @@ var (
 type OziachBot struct {
 	TwitchClient IRC
 	ChannelDB    ChannelDatabase
+	HiscoreAPI   *hiscores.HiscoreAPI
 }
 
 // IRC Interface for interaction with an IRC Server

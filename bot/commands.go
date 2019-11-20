@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/dustin/go-humanize"
-	"github.com/mfboulos/oziachbot/hiscores"
 )
 
 // IncorrectFormatError Returned when a command invocation is malformed
@@ -16,7 +15,7 @@ func (e *IncorrectFormatError) Error() string {
 
 // HandleSkillLookup parses user message and sends the formatted result of a skill lookup
 func (bot *OziachBot) HandleSkillLookup(channel, user, skillName, player string) error {
-	playerHiscores, mode, err := hiscores.LookupHiscores(player)
+	playerHiscores, mode, err := bot.HiscoreAPI.LookupHiscores(player)
 	if err != nil {
 		bot.Say(channel, fmt.Sprintf("@%s Could not find player %s", user, player))
 		return err
