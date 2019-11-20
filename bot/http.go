@@ -20,7 +20,7 @@ func (bot *OziachBot) APIGetChannel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if name, ok := pathParams["channel"]; ok {
-		channel, err := bot.GetChannel(name)
+		channel, err := bot.ChannelDB.GetChannel(name)
 
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)

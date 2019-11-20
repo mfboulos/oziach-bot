@@ -3,13 +3,9 @@ package bot
 import (
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
@@ -19,13 +15,43 @@ import (
 var (
 	// TableName Name of the table holding Channel records in DynamoDB
 	TableName string = "ob-channels"
+
+	// Usernames that are ignored when handling messages, stored as a set
+	ignored map[string]struct{} = map[string]struct{}{
+		"streamelements": struct{}{},
+	}
 )
 
 // OziachBot Object structure containing all necessary clients and connections
 // for OziachBot
 type OziachBot struct {
-	TwitchClient *twitch.Client
-	ChannelDB    *dynamodb.DynamoDB
+	TwitchClient IRC
+	ChannelDB    ChannelDatabase
+}
+
+// IRC Interface for interaction with an IRC Server
+type IRC interface {
+	Say(channel, text string)
+	Whisper(username, text string)
+	Join(channel string)
+	Depart(channel string)
+	Userlist(channel string) ([]string, error)
+	Connect() error
+	Disconnect() error
+}
+
+// ChannelDatabase Interface for CRUD operations on Channel database
+type ChannelDatabase interface {
+	GetChannel(name string) (Channel, error)
+	GetAllChannels() ([]Channel, error)
+	AddChannel(name string) (Channel, error)
+	UpdateChannel(name string, builder expression.Builder) (Channel, error)
+}
+
+// DynamoDBChannelDatabase Implementation of ChannelDatabase that uses a
+// DynamoDB client to access the database
+type DynamoDBChannelDatabase struct {
+	Client *dynamodb.DynamoDB
 }
 
 // Channel DynamoDB schema for channel records
@@ -62,10 +88,104 @@ func (e ChannelAlreadyExistsError) Error() string {
 	return fmt.Sprintf("Channel %s already exists", e.Channel)
 }
 
+// GetChannel Gets the channel record by primary ID (Name)
+func (db *DynamoDBChannelDatabase) GetChannel(name string) (Channel, error) {
+	// Anonymous struct with just the channel name
+	channelKey := struct {
+		Name string
+	}{Name: name}
+	marshalledKey, err := dynamodbattribute.MarshalMap(channelKey)
+
+	if err != nil {
+		return Channel{}, err
+	}
+
+	getItemInput := &dynamodb.GetItemInput{}
+	getItemInput.SetTableName(TableName)
+	getItemInput.SetKey(marshalledKey)
+	output, err := db.Client.GetItem(getItemInput)
+
+	// GetItem doesn't set Item if it doesn't find anything, so
+	// we check for a "zero map"
+	if len(output.Item) == 0 {
+		return Channel{}, ChannelNotFoundError{name}
+	}
+
+	return UnmarshalChannel(output.Item)
+}
+
+// GetAllChannels Gets all channels from the database
+func (db *DynamoDBChannelDatabase) GetAllChannels() ([]Channel, error) {
+	// Scan all records from channel DB
+	scanInput := &dynamodb.ScanInput{
+		TableName: &TableName,
+	}
+
+	result, err := db.Client.Scan(scanInput)
+	if err != nil {
+		return []Channel{}, err
+	}
+
+	out := make([]Channel, len(result.Items))
+	for i, item := range result.Items {
+		channel, err := UnmarshalChannel(item)
+
+		if err != nil {
+			return out, err
+		}
+
+		out[i] = channel
+	}
+
+	return out, nil
+}
+
+// AddChannel Adds a new channel by name to the channel DB. Fails if a record
+// with that Name already exists
+func (db *DynamoDBChannelDatabase) AddChannel(name string) (Channel, error) {
+	channel := Channel{
+		Name:        name,
+		IsConnected: true,
+	}
+	marshalledChannel, err := dynamodbattribute.MarshalMap(channel)
+
+	if err != nil {
+		return channel, err
+	}
+
+	expression, err := expression.NewBuilder().WithCondition(
+		expression.Name("Name").AttributeNotExists(),
+	).Build()
+
+	if err != nil {
+		return channel, err
+	}
+
+	putItemInput := &dynamodb.PutItemInput{
+		ExpressionAttributeNames:  expression.Names(),
+		ExpressionAttributeValues: expression.Values(),
+		ConditionExpression:       expression.Condition(),
+	}
+	putItemInput.SetTableName(TableName)
+	putItemInput.SetItem(marshalledChannel)
+	_, err = db.Client.PutItem(putItemInput)
+
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodb.ErrCodeConditionalCheckFailedException:
+				err = ChannelAlreadyExistsError{name}
+			}
+		}
+	}
+
+	return channel, err
+}
+
 // UpdateChannel Updates an existing Channel record in the DB. Builds an expression
 // based on the given builder by adding attribute existence check on the primary key.
 // Returns ChannelNotFoundError if the existence check fails
-func (bot *OziachBot) UpdateChannel(name string, builder expression.Builder) (Channel, error) {
+func (db *DynamoDBChannelDatabase) UpdateChannel(name string, builder expression.Builder) (Channel, error) {
 	// Anonymous struct with just the channel name
 	channelKey := struct {
 		Name string
@@ -94,7 +214,7 @@ func (bot *OziachBot) UpdateChannel(name string, builder expression.Builder) (Ch
 	updateItemInput.SetTableName(TableName)
 	updateItemInput.SetReturnValues(dynamodb.ReturnValueAllNew)
 	updateItemInput.SetKey(marshalledKey)
-	output, err := bot.ChannelDB.UpdateItem(updateItemInput)
+	output, err := db.Client.UpdateItem(updateItemInput)
 
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
@@ -110,74 +230,6 @@ func (bot *OziachBot) UpdateChannel(name string, builder expression.Builder) (Ch
 	return UnmarshalChannel(output.Attributes)
 }
 
-// AddChannel Adds a new channel by name to the channel DB. Fails if a record
-// with that Name already exists
-func (bot *OziachBot) AddChannel(name string) (Channel, error) {
-	channel := Channel{
-		Name:        name,
-		IsConnected: true,
-	}
-	marshalledChannel, err := dynamodbattribute.MarshalMap(channel)
-
-	if err != nil {
-		return channel, err
-	}
-
-	expression, err := expression.NewBuilder().WithCondition(
-		expression.Name("Name").AttributeNotExists(),
-	).Build()
-
-	if err != nil {
-		return channel, err
-	}
-
-	putItemInput := &dynamodb.PutItemInput{
-		ExpressionAttributeNames:  expression.Names(),
-		ExpressionAttributeValues: expression.Values(),
-		ConditionExpression:       expression.Condition(),
-	}
-	putItemInput.SetTableName(TableName)
-	putItemInput.SetItem(marshalledChannel)
-	_, err = bot.ChannelDB.PutItem(putItemInput)
-
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodb.ErrCodeConditionalCheckFailedException:
-				err = ChannelAlreadyExistsError{name}
-			}
-		}
-	}
-
-	return channel, err
-}
-
-// GetChannel Gets the channel record by primary ID (Name)
-func (bot *OziachBot) GetChannel(name string) (Channel, error) {
-	// Anonymous struct with just the channel name
-	channelKey := struct {
-		Name string
-	}{Name: name}
-	marshalledKey, err := dynamodbattribute.MarshalMap(channelKey)
-
-	if err != nil {
-		return Channel{}, err
-	}
-
-	getItemInput := &dynamodb.GetItemInput{}
-	getItemInput.SetTableName(TableName)
-	getItemInput.SetKey(marshalledKey)
-	output, err := bot.ChannelDB.GetItem(getItemInput)
-
-	// GetItem doesn't set Item if it doesn't find anything, so
-	// we check for a "zero map"
-	if len(output.Item) == 0 {
-		return Channel{}, ChannelNotFoundError{name}
-	}
-
-	return UnmarshalChannel(output.Item)
-}
-
 // DisconnectFromChannel Updates the record corresponding to the named channel by
 // setting IsConnected to false, then OziachBot departs from the channel. Does not
 // delete the DB record
@@ -188,7 +240,7 @@ func (bot *OziachBot) DisconnectFromChannel(name string) error {
 	)
 
 	log.Println("Attempting to disconnect from", name)
-	channel, err := bot.UpdateChannel(name, builder)
+	channel, err := bot.ChannelDB.UpdateChannel(name, builder)
 
 	if err == nil {
 		bot.TwitchClient.Depart(channel.Name)
@@ -205,7 +257,7 @@ func (bot *OziachBot) DisconnectFromChannel(name string) error {
 // OziachBot joins the channel
 func (bot *OziachBot) ConnectToChannel(name string) error {
 	log.Println("Attempting to connect to", name)
-	channel, err := bot.AddChannel(name)
+	channel, err := bot.ChannelDB.AddChannel(name)
 
 	if err != nil {
 		// Expression builder to set IsConnected to true
@@ -213,7 +265,7 @@ func (bot *OziachBot) ConnectToChannel(name string) error {
 			expression.Set(expression.Name("IsConnected"), expression.Value(true)),
 		)
 
-		channel, err = bot.UpdateChannel(name, builder)
+		channel, err = bot.ChannelDB.UpdateChannel(name, builder)
 	}
 
 	if err == nil {
@@ -226,48 +278,23 @@ func (bot *OziachBot) ConnectToChannel(name string) error {
 	return err
 }
 
-// InitBot Initalizes OziachBot with callbacks and channels it needs to join
-func InitBot() OziachBot {
-	// Twitch IRC client configuration
-	twitchClient := twitch.NewClient(
-		"OziachBot",
-		fmt.Sprintf("oauth:%s", os.Getenv("OZIACH_AUTH")),
-	)
-
-	log.Println("Connecting to DynamoDB")
-	// DynamoDB client connection
-	credentialProvider := &credentials.EnvProvider{}
-	credentials := credentials.NewCredentials(credentialProvider)
-	dbConfig := aws.NewConfig().WithCredentials(credentials).WithRegion("us-west-1")
-	session := session.New(dbConfig)
-	dbClient := dynamodb.New(session)
-
+// InitBot Initalizes OziachBot by querying for channels and joining them
+func (bot *OziachBot) InitBot() error {
 	log.Println("Reading channels from DB")
-	// Read all records from channel DB
-	scanInput := &dynamodb.ScanInput{TableName: &TableName}
-	result, err := dbClient.Scan(scanInput)
+	channels, err := bot.ChannelDB.GetAllChannels()
+
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	log.Println("Joining channels")
 	// Join all rooms from the DB query
-	for _, item := range result.Items {
-		channel, err := UnmarshalChannel(item)
-		if err != nil {
-			panic(err)
-		}
-		twitchClient.Join(channel.Name)
+	log.Println("Joining channels")
+
+	for _, channel := range channels {
+		bot.TwitchClient.Join(channel.Name)
 	}
 
-	bot := OziachBot{
-		TwitchClient: twitchClient,
-		ChannelDB:    dbClient,
-	}
-
-	bot.TwitchClient.OnNewMessage(bot.HandleMessage)
-	go bot.ServeAPI()
-	return bot
+	return nil
 }
 
 // Connect Connects OziachBot to Twitch IRC
@@ -278,35 +305,38 @@ func (bot *OziachBot) Connect() error {
 
 // HandleMessage Main callback method to wrap all actions on a PRIVMSG
 func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message twitch.Message) {
-	log.Printf("Handing message \"%s\" from channel %s\n", message.Text, channel)
-	idx := strings.Index(message.Text, " ")
-	if idx == -1 {
-		idx = len(message.Text)
-	}
-
-	switch message.Text[:idx] {
-	case "!lvl", "!level":
-		tokens := strings.SplitN(message.Text, " ", 3)
-		if len(tokens) < 3 {
-			break
+	// Only handle message if the user is not a bot and not an ignored user
+	if _, ok := ignored[user.Username]; !strings.HasSuffix(user.Username, "bot") && !ok {
+		log.Printf("Handling message \"%s\" from channel %s\n", message.Text, channel)
+		idx := strings.Index(message.Text, " ")
+		if idx == -1 {
+			idx = len(message.Text)
 		}
 
-		skillName := tokens[1]
-		// Truncate player to 12 characters, max length of an OSRS username
-		player := tokens[2][:12]
+		switch message.Text[:idx] {
+		case "!lvl", "!level":
+			tokens := strings.SplitN(message.Text, " ", 3)
+			if len(tokens) < 3 {
+				break
+			}
 
-		go bot.HandleSkillLookup(channel, user, skillName, player)
-	case "!total", "!overall":
-		tokens := strings.SplitN(message.Text, " ", 2)
-		if len(tokens) < 2 {
-			break
+			skillName := tokens[1]
+			// Truncate player to 12 characters, max length of an OSRS username
+			player := tokens[2][:12]
+
+			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
+		case "!total", "!overall":
+			tokens := strings.SplitN(message.Text, " ", 2)
+			if len(tokens) < 2 {
+				break
+			}
+
+			skillName := "Overall"
+			// Truncate player to 12 characters, max length of an OSRS username
+			player := tokens[1][:12]
+
+			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 		}
-
-		skillName := "Overall"
-		// Truncate player to 12 characters, max length of an OSRS username
-		player := tokens[1][:12]
-
-		go bot.HandleSkillLookup(channel, user, skillName, player)
 	}
 }
 
