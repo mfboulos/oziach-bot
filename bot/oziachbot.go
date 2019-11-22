@@ -298,12 +298,6 @@ func (bot *OziachBot) InitBot() error {
 	return nil
 }
 
-// Connect Connects OziachBot to Twitch IRC
-func (bot *OziachBot) Connect() error {
-	log.Println("Connecting to Twitch IRC")
-	return bot.TwitchClient.Connect()
-}
-
 // HandleMessage Main callback method to wrap all actions on a PRIVMSG
 func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message twitch.Message) {
 	// Only handle message if the user is not a bot and not an ignored user
@@ -323,7 +317,10 @@ func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message tw
 
 			skillName := tokens[1]
 			// Truncate player to 12 characters, max length of an OSRS username
-			player := tokens[2][:12]
+			player := tokens[2]
+			if len(player) > 12 {
+				player = player[:12]
+			}
 
 			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 		case "!total", "!overall":
@@ -334,7 +331,10 @@ func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message tw
 
 			skillName := "Overall"
 			// Truncate player to 12 characters, max length of an OSRS username
-			player := tokens[1][:12]
+			player := tokens[1]
+			if len(player) > 12 {
+				player = player[:12]
+			}
 
 			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 		}

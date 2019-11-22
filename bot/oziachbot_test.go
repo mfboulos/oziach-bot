@@ -1,10 +1,12 @@
 package bot
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
+	"github.com/gempir/go-twitch-irc"
 )
 
 var (
@@ -135,7 +137,7 @@ func TestInitBot(t *testing.T) {
 		select {
 		case <-bot.TwitchClient.(*mockIRC).joinChan:
 		case <-time.After(3 * time.Second):
-			t.Error("Channel not joined")
+			t.Error("Join unsuccessful due to timeout")
 		}
 	}
 
@@ -159,7 +161,7 @@ func TestConnectToChannel(t *testing.T) {
 				t.Errorf("Saved %s, but expected to save %s", j.Name, name)
 			}
 		case <-time.After(3 * time.Second):
-			t.Error("New channel not saved")
+			t.Error("Save unsuccessful due to timeout")
 		}
 
 		select {
@@ -168,7 +170,7 @@ func TestConnectToChannel(t *testing.T) {
 				t.Errorf("Joined %s, but expected to join %s", j, name)
 			}
 		case <-time.After(3 * time.Second):
-			t.Error("New channel not joined")
+			t.Error("Join unsuccessful due to timeout")
 		}
 	})
 
@@ -182,7 +184,7 @@ func TestConnectToChannel(t *testing.T) {
 				t.Errorf("Updated %s, but expected to update %s", j, name)
 			}
 		case <-time.After(3 * time.Second):
-			t.Error("Existing channel not updated")
+			t.Error("Update unsuccessful due to timeout")
 		}
 
 		select {
@@ -191,7 +193,198 @@ func TestConnectToChannel(t *testing.T) {
 				t.Errorf("Joined %s, but expected to join %s", j, name)
 			}
 		case <-time.After(3 * time.Second):
-			t.Error("New channel not joined")
+			t.Error("Join unsuccessful due to timeout")
 		}
+	})
+}
+
+func TestDisconnectFromChannel(t *testing.T) {
+	bot := NewMockBot()
+
+	t.Run("NewChannel", func(t *testing.T) {
+		name := "new channel"
+		wait := make(chan error)
+		go func() {
+			err := bot.DisconnectFromChannel(name)
+			wait <- err
+		}()
+
+		select {
+		case <-bot.ChannelDB.(*mockChannelDB).updateChan:
+			t.Error("Incorrect update of nonexistent channel")
+		case <-bot.TwitchClient.(*mockIRC).departChan:
+			t.Error("Incorrect departure of nonexistent channel")
+		case <-time.After(3 * time.Second):
+			t.Error("Disconnect unsuccessful due to timeout")
+		case err := <-wait:
+			if err == nil {
+				t.Fatal("Expected error")
+			}
+		}
+	})
+
+	t.Run("ExistingChannel", func(t *testing.T) {
+		name := connectedChannel.Name
+		go bot.DisconnectFromChannel(name)
+
+		select {
+		case j := <-bot.ChannelDB.(*mockChannelDB).updateChan:
+			if j != name {
+				t.Errorf("Updated %s, but expected to update %s", j, name)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("Disconnect unsuccessful due to timeout")
+		}
+
+		select {
+		case j := <-bot.TwitchClient.(*mockIRC).departChan:
+			if j != name {
+				t.Errorf("Departed %s, but expected to depart %s", j, name)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("Disconnect unsuccessful due to timeout")
+		}
+	})
+}
+
+func TestHandleMessage(t *testing.T) {
+	bot := NewMockBot()
+
+	t.Run("LevelCommand", func(t *testing.T) {
+		testUser := twitch.User{
+			Username:    "testuser",
+			DisplayName: "TestUser",
+		}
+
+		t.Run("ValidInvocation", func(t *testing.T) {
+			testMessage := twitch.Message{
+				Text: fmt.Sprintf("!lvl ranged %s", ironmanAccount),
+			}
+
+			expected := "/me " + FormatSkillLookupOutput(
+				testUser.DisplayName,
+				ironmanAccount,
+				"Ranged",
+				GameModeIronman,
+				SkillHiscore{
+					Rank:  342695,
+					Level: 90,
+					Exp:   5866885,
+				},
+			)
+
+			go bot.HandleMessage("whatever channel doesn't matter", testUser, testMessage)
+
+			select {
+			case resp := <-bot.TwitchClient.(*mockIRC).messageChan:
+				if resp != expected {
+					t.Errorf("Said %s, but expected to say %s", resp, expected)
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("Message handling unsuccessful due to timeout")
+			}
+		})
+
+		t.Run("InvalidPlayer", func(t *testing.T) {
+			testMessage := twitch.Message{
+				Text: fmt.Sprintf("!lvl ranged %s", notAnAccount),
+			}
+
+			expected := fmt.Sprintf(
+				"/me @%s Could not find player %s",
+				testUser.DisplayName,
+				notAnAccount,
+			)
+
+			go bot.HandleMessage("whatever channel doesn't matter", testUser, testMessage)
+
+			select {
+			case resp := <-bot.TwitchClient.(*mockIRC).messageChan:
+				if resp != expected {
+					t.Errorf("Said %s, but expected to say %s", resp, expected)
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("Message handling unsuccessful due to timeout")
+			}
+		})
+
+		t.Run("InvalidSkill", func(t *testing.T) {
+			testMessage := twitch.Message{
+				Text: fmt.Sprintf("!lvl sailing %s", hardcoreAccount),
+			}
+
+			wait := make(chan struct{})
+			go func() {
+				bot.HandleMessage("whatever channel doesn't matter", testUser, testMessage)
+				wait <- struct{}{}
+			}()
+
+			select {
+			case <-bot.TwitchClient.(*mockIRC).messageChan:
+				t.Errorf("Bot responded, but should fail silently")
+			case <-time.After(3 * time.Second):
+				t.Error("Message handling unsuccessful due to timeout")
+			case <-wait:
+			}
+		})
+	})
+
+	t.Run("TotalCommand", func(t *testing.T) {
+		testUser := twitch.User{
+			Username:    "testuser",
+			DisplayName: "TestUser",
+		}
+
+		t.Run("ValidInvocation", func(t *testing.T) {
+			testMessage := twitch.Message{
+				Text: fmt.Sprintf("!total %s", ironmanAccount),
+			}
+
+			expected := "/me " + FormatSkillLookupOutput(
+				testUser.DisplayName,
+				ironmanAccount,
+				"Overall",
+				GameModeIronman,
+				SkillHiscore{
+					Rank:  1140740,
+					Level: 922,
+					Exp:   26362111,
+				},
+			)
+
+			go bot.HandleMessage("whatever channel doesn't matter", testUser, testMessage)
+
+			select {
+			case resp := <-bot.TwitchClient.(*mockIRC).messageChan:
+				if resp != expected {
+					t.Errorf("Said %s, but expected to say %s", resp, expected)
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("Message handling unsuccessful due to timeout")
+			}
+		})
+
+		t.Run("InvalidPlayer", func(t *testing.T) {
+			testMessage := twitch.Message{
+				Text: fmt.Sprintf("!total %s", notAnAccount),
+			}
+
+			expected := fmt.Sprintf(
+				"/me @%s Could not find player %s",
+				testUser.DisplayName,
+				notAnAccount,
+			)
+
+			go bot.HandleMessage("whatever channel doesn't matter", testUser, testMessage)
+
+			select {
+			case resp := <-bot.TwitchClient.(*mockIRC).messageChan:
+				if resp != expected {
+					t.Errorf("Said %s, but expected to say %s", resp, expected)
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("Message handling unsuccessful due to timeout")
+			}
+		})
 	})
 }

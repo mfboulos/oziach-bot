@@ -73,9 +73,9 @@ func (mock mockHiscoreAPIClient) GetAPIResponse(player string, mode GameMode) (s
 const (
 	normalAccount         string = "Normal"
 	ironmanAccount        string = "Ironman"
-	hardcoreAccount       string = "Harcore Ironman"
-	fallenHardcoreAccount string = "Fallen Hardcore Ironman"
-	notAnAccount          string = "Invalid Account"
+	hardcoreAccount       string = "HCIM"
+	fallenHardcoreAccount string = "Fallen HCIM"
+	notAnAccount          string = "Invalid Acc"
 )
 
 func NewMockHiscoreAPI() *HiscoreAPI {

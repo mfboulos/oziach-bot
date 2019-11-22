@@ -28,16 +28,22 @@ func (bot *OziachBot) HandleSkillLookup(channel, user, skillName, player string)
 		return err
 	}
 
-	bot.TwitchClient.Say(channel, fmt.Sprintf(
-		"/me @%s - %s | %s level: %s | Rank (%s): %s | Exp: %s",
+	bot.Say(channel, FormatSkillLookupOutput(user, player, name, mode, skill))
+
+	return nil
+}
+
+// FormatSkillLookupOutput Formats the information returned by OziachBot upon a successful
+// skill lookup
+func FormatSkillLookupOutput(user, player, skillName string, mode GameMode, skill SkillHiscore) string {
+	return fmt.Sprintf(
+		"@%s - %s | %s level: %s | Rank (%s): %s | Exp: %s",
 		user,
 		player,
-		name,
+		skillName,
 		humanize.Comma(int64(skill.Level)),
 		mode.Name,
 		humanize.Comma(int64(skill.Rank)),
 		humanize.Comma(int64(skill.Exp)),
-	))
-
-	return nil
+	)
 }
