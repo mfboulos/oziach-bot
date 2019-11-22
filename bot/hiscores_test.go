@@ -1,16 +1,14 @@
-package hiscores_test
+package bot
 
 import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/mfboulos/oziachbot/hiscores"
 )
 
 type mockHiscoreAPIClient struct{}
 
-func (mock mockHiscoreAPIClient) GetAPIResponse(player string, mode hiscores.GameMode) (string, error) {
+func (mock mockHiscoreAPIClient) GetAPIResponse(player string, mode GameMode) (string, error) {
 	mockScores := []string{
 		"1140740,922,26362111", // Skills start here
 		"1600556,50,102080",
@@ -48,20 +46,20 @@ func (mock mockHiscoreAPIClient) GetAPIResponse(player string, mode hiscores.Gam
 		"-1,-1",
 	}
 
-	if player == fallenHardcoreAccount && mode != hiscores.GameModeHardcoreIronman {
+	if player == fallenHardcoreAccount && mode != GameModeHardcoreIronman {
 		mockScores[0] = mockScores[0] + "9"
 	}
 
 	var isValid bool
 
 	switch mode {
-	case hiscores.GameModeUltimateIronman:
+	case GameModeUltimateIronman:
 		isValid = false
-	case hiscores.GameModeHardcoreIronman:
+	case GameModeHardcoreIronman:
 		isValid = player == hardcoreAccount || player == fallenHardcoreAccount
-	case hiscores.GameModeIronman:
+	case GameModeIronman:
 		isValid = player != notAnAccount && player != normalAccount
-	case hiscores.GameModeNormal:
+	case GameModeNormal:
 		isValid = player != notAnAccount
 	}
 
@@ -69,7 +67,7 @@ func (mock mockHiscoreAPIClient) GetAPIResponse(player string, mode hiscores.Gam
 		return strings.Join(mockScores, " "), nil
 	}
 
-	return "", &hiscores.HiscoreAPIError{player, mode}
+	return "", &HiscoreAPIError{player, mode}
 }
 
 const (
@@ -80,18 +78,18 @@ const (
 	notAnAccount          string = "Invalid Account"
 )
 
-func NewMockAPI() *hiscores.HiscoreAPI {
-	return &hiscores.HiscoreAPI{
+func NewMockHiscoreAPI() *HiscoreAPI {
+	return &HiscoreAPI{
 		Client: &mockHiscoreAPIClient{},
 	}
 }
 
 func TestNewOSRSHiscoreAPI(t *testing.T) {
-	api := hiscores.NewOSRSHiscoreAPI()
+	api := NewOSRSHiscoreAPI()
 
 	// We consider the API object to be valid if it uses the Hiscore API
 	// client provided by the hiscores package
-	if _, ok := api.Client.(*hiscores.OSRSHiscoreAPIClient); !ok {
+	if _, ok := api.Client.(*OSRSHiscoreAPIClient); !ok {
 		t.Fatalf("New OSRS Hiscore API does not use OSRS Hiscore API Client")
 	}
 }
@@ -99,14 +97,14 @@ func TestNewOSRSHiscoreAPI(t *testing.T) {
 func TestFormatHiscoreAPIURL(t *testing.T) {
 	type urlFormatTestCase struct {
 		player   string
-		mode     hiscores.GameMode
+		mode     GameMode
 		expected string
 	}
 
 	testCases := []urlFormatTestCase{
 		urlFormatTestCase{
 			player: normalAccount,
-			mode:   hiscores.GameModeUltimateIronman,
+			mode:   GameModeUltimateIronman,
 			expected: fmt.Sprintf(
 				"https://secure.runescape.com/m=hiscore_oldschool_ultimate/index_lite.ws?player=%s",
 				normalAccount,
@@ -114,7 +112,7 @@ func TestFormatHiscoreAPIURL(t *testing.T) {
 		},
 		urlFormatTestCase{
 			player: ironmanAccount,
-			mode:   hiscores.GameModeNormal,
+			mode:   GameModeNormal,
 			expected: fmt.Sprintf(
 				"https://secure.runescape.com/m=hiscore_oldschool/index_lite.ws?player=%s",
 				ironmanAccount,
@@ -122,7 +120,7 @@ func TestFormatHiscoreAPIURL(t *testing.T) {
 		},
 		urlFormatTestCase{
 			player: notAnAccount,
-			mode:   hiscores.GameModeHardcoreIronman,
+			mode:   GameModeHardcoreIronman,
 			expected: fmt.Sprintf(
 				"https://secure.runescape.com/m=hiscore_oldschool_hardcore_ironman/index_lite.ws?player=%s",
 				notAnAccount,
@@ -131,7 +129,7 @@ func TestFormatHiscoreAPIURL(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		actual := hiscores.FormatHiscoreAPIURL(tc.player, tc.mode)
+		actual := FormatHiscoreAPIURL(tc.player, tc.mode)
 		if actual != tc.expected {
 			t.Errorf("Hiscore API URL was %s, expected %s",
 				actual,
@@ -142,31 +140,31 @@ func TestFormatHiscoreAPIURL(t *testing.T) {
 }
 
 func TestHiscoresLookup(t *testing.T) {
-	mockAPI := NewMockAPI()
+	mockAPI := NewMockHiscoreAPI()
 
 	t.Run("ByMode", func(t *testing.T) {
 		type hiscoreTestCase struct {
 			player     string
-			mode       hiscores.GameMode
+			mode       GameMode
 			shouldPass bool
 		}
 
 		testCaseMap := map[string][]hiscoreTestCase{
 			"SameMode": []hiscoreTestCase{
-				{normalAccount, hiscores.GameModeNormal, true},
-				{ironmanAccount, hiscores.GameModeIronman, true},
-				{hardcoreAccount, hiscores.GameModeHardcoreIronman, true},
+				{normalAccount, GameModeNormal, true},
+				{ironmanAccount, GameModeIronman, true},
+				{hardcoreAccount, GameModeHardcoreIronman, true},
 			},
 			"LowerMode": []hiscoreTestCase{
-				{hardcoreAccount, hiscores.GameModeNormal, true},
-				{hardcoreAccount, hiscores.GameModeIronman, true},
+				{hardcoreAccount, GameModeNormal, true},
+				{hardcoreAccount, GameModeIronman, true},
 			},
 			"InvalidPlayer": []hiscoreTestCase{
-				{notAnAccount, hiscores.GameModeNormal, false},
+				{notAnAccount, GameModeNormal, false},
 			},
 			"IncompatibleMode": []hiscoreTestCase{
-				{hardcoreAccount, hiscores.GameModeUltimateIronman, false},
-				{normalAccount, hiscores.GameModeIronman, false},
+				{hardcoreAccount, GameModeUltimateIronman, false},
+				{normalAccount, GameModeIronman, false},
 			},
 		}
 
@@ -203,11 +201,11 @@ func TestHiscoresLookup(t *testing.T) {
 			}
 		})
 
-		players := map[string]hiscores.GameMode{
-			normalAccount:         hiscores.GameModeNormal,
-			ironmanAccount:        hiscores.GameModeIronman,
-			hardcoreAccount:       hiscores.GameModeHardcoreIronman,
-			fallenHardcoreAccount: hiscores.GameModeIronman,
+		players := map[string]GameMode{
+			normalAccount:         GameModeNormal,
+			ironmanAccount:        GameModeIronman,
+			hardcoreAccount:       GameModeHardcoreIronman,
+			fallenHardcoreAccount: GameModeIronman,
 		}
 
 		for player, expectedMode := range players {
@@ -228,8 +226,8 @@ func TestHiscoresLookup(t *testing.T) {
 
 func TestGetSkillHiscoreFromName(t *testing.T) {
 	player := normalAccount
-	mode := hiscores.GameModeNormal
-	mockAPI := NewMockAPI()
+	mode := GameModeNormal
+	mockAPI := NewMockHiscoreAPI()
 	hiscores, err := mockAPI.LookupHiscoresByGameMode(player, mode)
 
 	if err != nil {

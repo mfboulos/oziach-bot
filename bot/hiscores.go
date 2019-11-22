@@ -1,4 +1,4 @@
-package hiscores
+package bot
 
 import (
 	"errors"
