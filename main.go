@@ -12,7 +12,6 @@ import (
 	"github.com/gempir/go-twitch-irc"
 
 	"github.com/mfboulos/oziachbot/bot"
-	"github.com/mfboulos/oziachbot/hiscores"
 )
 
 func main() {
@@ -38,18 +37,20 @@ func main() {
 		ChannelDB: &bot.DynamoDBChannelDatabase{
 			Client: dbClient,
 		},
-		HiscoreAPI: hiscores.NewOSRSHiscoreAPI(),
+		HiscoreAPI: bot.NewOSRSHiscoreAPI(),
 	}
 	go oziachBot.ServeAPI()
 
-	twitchClient.OnNewMessage(oziachBot.HandleMessage)
+	twitchClient.OnNewMessage(func(channel string, user twitch.User, message twitch.Message) {
+		go oziachBot.HandleMessage(channel, user, message)
+	})
 	err := oziachBot.InitBot()
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = oziachBot.Connect()
+	err = oziachBot.TwitchClient.Connect()
 
 	if err != nil {
 		log.Fatal(err)

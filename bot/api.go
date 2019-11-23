@@ -2,7 +2,6 @@ package bot
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -10,8 +9,11 @@ import (
 )
 
 // HTTPMessage Converts a string message into a byte array JSON string with key "message"
-func HTTPMessage(message string) []byte {
-	return []byte(fmt.Sprintf(`{"message": "%s"}`, message))
+func HTTPMessage(m string) []byte {
+	json, _ := json.Marshal(struct {
+		Message string `json:"message"`
+	}{Message: m})
+	return json
 }
 
 // APIGetChannel Endpoint handler function to route to GetChannel
