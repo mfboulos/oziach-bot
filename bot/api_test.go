@@ -3,6 +3,7 @@ package bot
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -10,6 +11,14 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+type stringerType struct {
+	message string
+}
+
+func (s stringerType) String() string {
+	return s.message
+}
 
 type MockResponseWriter struct {
 	header     http.Header
@@ -37,13 +46,74 @@ func NewMockResponseWriter() *MockResponseWriter {
 	}
 }
 
-func TestHTTPMessage(t *testing.T) {
+func TestJSONMessage(t *testing.T) {
 	message := "This is a test message"
 	expected := []byte(fmt.Sprintf(`{"message":"%s"}`, message))
-	actual := HTTPMessage(message)
+	actual := JSONMessage(message)
 
 	if !bytes.Equal(expected, actual) {
 		t.Fatalf("Expected %s, but found %s", expected, actual)
+	}
+}
+
+func TestHTTPError(t *testing.T) {
+	type testCase struct {
+		Name     string
+		Err      interface{}
+		Code     int
+		Expected []byte
+	}
+	tcString := "This is a test message"
+	tcStringer := stringerType{"This is a stringer test message"}
+	tcError := errors.New("This is an error test message")
+	tcOther := struct {
+		Val1 string
+		Val2 int
+	}{
+		Val1: "This is a test field",
+		Val2: 123,
+	}
+
+	testCases := []testCase{
+		testCase{
+			Name:     "String",
+			Err:      tcString,
+			Code:     http.StatusInternalServerError,
+			Expected: JSONMessage(tcString),
+		},
+		testCase{
+			Name:     "Stringer",
+			Err:      tcStringer,
+			Code:     http.StatusNotFound,
+			Expected: JSONMessage(tcStringer.String()),
+		},
+		testCase{
+			Name:     "Error",
+			Err:      tcError,
+			Code:     http.StatusForbidden,
+			Expected: JSONMessage(tcError.Error()),
+		},
+		testCase{
+			Name:     "Other",
+			Err:      tcOther,
+			Code:     http.StatusBadRequest,
+			Expected: JSONMessage(fmt.Sprintf("%+v", tcOther)),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			t.Parallel()
+			w := NewMockResponseWriter()
+			HTTPError(w, tc.Err, tc.Code)
+
+			if !bytes.Equal(tc.Expected, w.response) {
+				t.Errorf("Expected response %s, but found %s", tc.Expected, w.response)
+			}
+			if tc.Code != w.statusCode {
+				t.Errorf("Expected status code %v, but found %v", tc.Code, w.statusCode)
+			}
+		})
 	}
 }
 
@@ -57,8 +127,10 @@ func TestAPIGetChannel(t *testing.T) {
 		})
 		respWriter := NewMockResponseWriter()
 		expectedStatus := http.StatusNotFound
-		expectedWrite := HTTPMessage(ChannelNotFoundError{channelName}.Error())
+		expectedWrite := JSONMessage(ChannelNotFoundError{channelName}.Error())
 		bot.APIGetChannel(respWriter, req)
+
+		fmt.Println(respWriter.response)
 
 		if respWriter.statusCode != expectedStatus {
 			t.Errorf("Expected status code %v, but found %v", expectedStatus, respWriter.statusCode)
@@ -99,8 +171,8 @@ func TestAPIConnectToChannel(t *testing.T) {
 			"channel": channelName,
 		})
 		respWriter := NewMockResponseWriter()
-		expectedStatus := http.StatusOK
-		expectedWrite := []byte{}
+		expectedStatus := http.StatusInternalServerError
+		expectedWrite := JSONMessage(ChannelNotFoundError{channelName}.Error())
 		wait := make(chan struct{})
 		go func() {
 			bot.APIConnectToChannel(respWriter, req)
@@ -108,35 +180,20 @@ func TestAPIConnectToChannel(t *testing.T) {
 		}()
 
 		select {
-		case added := <-bot.ChannelDB.(*mockChannelDB).addChan:
-			if added.Name != channelName {
-				t.Errorf("Expected to add %s, but added %s", channelName, added.Name)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("API connect call failed due to timeout")
-		}
-
-		select {
-		case joined := <-bot.TwitchClient.(*mockIRC).joinChan:
-			if joined != channelName {
-				t.Errorf("Expected to join %s, but joined %s", channelName, joined)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("API connect call failed due to timeout")
-		}
-
-		select {
+		case <-bot.ChannelDB.(*mockChannelDB).addChan:
+			t.Errorf("Unexpected add to channel database")
+		case <-bot.TwitchClient.(*mockIRC).joinChan:
+			t.Errorf("Unexpected join to channel")
 		case <-time.After(3 * time.Second):
 			t.Error("API connect call failed due to timeout")
 		case <-wait:
-		}
+			if respWriter.statusCode != expectedStatus {
+				t.Errorf("Expected status code %v, but found %v", expectedStatus, respWriter.statusCode)
+			}
 
-		if respWriter.statusCode != expectedStatus {
-			t.Errorf("Expected status code %v, but found %v", expectedStatus, respWriter.statusCode)
-		}
-
-		if !bytes.Equal(respWriter.response, expectedWrite) {
-			t.Errorf("Expected response %s, but found %s", expectedWrite, respWriter.response)
+			if !bytes.Equal(respWriter.response, expectedWrite) {
+				t.Errorf("Expected response %s, but found %s", expectedWrite, respWriter.response)
+			}
 		}
 	})
 
@@ -199,7 +256,7 @@ func TestAPIDisconnectFromChannel(t *testing.T) {
 		})
 		respWriter := NewMockResponseWriter()
 		expectedStatus := http.StatusInternalServerError
-		expectedWrite := HTTPMessage(ChannelNotFoundError{channelName}.Error())
+		expectedWrite := JSONMessage(ChannelNotFoundError{channelName}.Error())
 		wait := make(chan struct{})
 		go func() {
 			bot.APIDisconnectFromChannel(respWriter, req)
@@ -277,7 +334,7 @@ func TestAPIDisconnectFromChannel(t *testing.T) {
 func TestHeartbeat(t *testing.T) {
 	respWriter := NewMockResponseWriter()
 	req, _ := http.NewRequest(http.MethodGet, "", nil)
-	
+
 	Heartbeat(respWriter, req)
 
 	if !bytes.Equal(respWriter.response, []byte("ok")) {

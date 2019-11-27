@@ -151,26 +151,20 @@ func TestInitBot(t *testing.T) {
 func TestConnectToChannel(t *testing.T) {
 	bot := NewMockBot()
 
-	t.Run("NewChannel", func(t *testing.T) {
+	t.Run("InvalidChannel", func(t *testing.T) {
 		name := "new channel"
-		go bot.ConnectToChannel(name)
+		wait := make(chan struct{})
+		go func() {
+			bot.ConnectToChannel(name)
+			wait <- struct{}{}
+		}()
 
 		select {
-		case j := <-bot.ChannelDB.(*mockChannelDB).addChan:
-			if j.Name != name {
-				t.Errorf("Saved %s, but expected to save %s", j.Name, name)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("Save unsuccessful due to timeout")
-		}
-
-		select {
-		case j := <-bot.TwitchClient.(*mockIRC).joinChan:
-			if j != name {
-				t.Errorf("Joined %s, but expected to join %s", j, name)
-			}
+		case <-bot.TwitchClient.(*mockIRC).joinChan:
+			t.Error("Joined an invalid channel")
 		case <-time.After(3 * time.Second):
 			t.Error("Join unsuccessful due to timeout")
+		case <-wait:
 		}
 	})
 

@@ -253,21 +253,16 @@ func (bot *OziachBot) DisconnectFromChannel(name string) error {
 	return err
 }
 
-// ConnectToChannel Adds a new channel record to the DB if it does not yet exist.
-// Otherwise, updates the existing channel by setting IsConnected to true. Then
-// OziachBot joins the channel
+// ConnectToChannel Updates an existing channel by setting IsConnected to true.
+// Then OziachBot joins the channel if it succeeds in doing so
 func (bot *OziachBot) ConnectToChannel(name string) error {
+	// Expression builder to set IsConnected to true
+	builder := expression.NewBuilder().WithUpdate(
+		expression.Set(expression.Name("IsConnected"), expression.Value(true)),
+	)
+
 	log.Println("Attempting to connect to", name)
-	channel, err := bot.ChannelDB.AddChannel(name)
-
-	if err != nil {
-		// Expression builder to set IsConnected to true
-		builder := expression.NewBuilder().WithUpdate(
-			expression.Set(expression.Name("IsConnected"), expression.Value(true)),
-		)
-
-		channel, err = bot.ChannelDB.UpdateChannel(name, builder)
-	}
+	channel, err := bot.ChannelDB.UpdateChannel(name, builder)
 
 	if err == nil {
 		bot.TwitchClient.Join(channel.Name)
