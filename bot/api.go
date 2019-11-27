@@ -107,7 +107,11 @@ func (bot *OziachBot) APIConnectToChannel(w http.ResponseWriter, r *http.Request
 		err := bot.ConnectToChannel(name)
 
 		if err != nil {
-			HTTPError(w, err, http.StatusInternalServerError)
+			code := http.StatusInternalServerError
+			if _, ok := err.(ChannelNotFoundError); ok {
+				code = http.StatusNotFound
+			}
+			HTTPError(w, err, code)
 		}
 	} else {
 		HTTPError(w, "Bad request format: /channel/{channel} required", http.StatusBadRequest)
@@ -123,7 +127,11 @@ func (bot *OziachBot) APIDisconnectFromChannel(w http.ResponseWriter, r *http.Re
 		err := bot.DisconnectFromChannel(name)
 
 		if err != nil {
-			HTTPError(w, err, http.StatusInternalServerError)
+			code := http.StatusInternalServerError
+			if _, ok := err.(ChannelNotFoundError); ok {
+				code = http.StatusNotFound
+			}
+			HTTPError(w, err, code)
 		}
 	} else {
 		HTTPError(w, "Bad request format: /channel/{channel} required", http.StatusBadRequest)

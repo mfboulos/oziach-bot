@@ -171,7 +171,7 @@ func TestAPIConnectToChannel(t *testing.T) {
 			"channel": channelName,
 		})
 		respWriter := NewMockResponseWriter()
-		expectedStatus := http.StatusInternalServerError
+		expectedStatus := http.StatusNotFound
 		expectedWrite := JSONMessage(ChannelNotFoundError{channelName}.Error())
 		wait := make(chan struct{})
 		go func() {
@@ -255,7 +255,7 @@ func TestAPIDisconnectFromChannel(t *testing.T) {
 			"channel": channelName,
 		})
 		respWriter := NewMockResponseWriter()
-		expectedStatus := http.StatusInternalServerError
+		expectedStatus := http.StatusNotFound
 		expectedWrite := JSONMessage(ChannelNotFoundError{channelName}.Error())
 		wait := make(chan struct{})
 		go func() {

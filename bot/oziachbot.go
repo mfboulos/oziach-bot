@@ -57,8 +57,9 @@ type DynamoDBChannelDatabase struct {
 
 // Channel DynamoDB schema for channel records
 type Channel struct {
-	Name        string
-	IsConnected bool
+	Name        string `json:"name"`
+	IsConnected bool   `json:"isConnected"`
+	RSN         string `json:"rsn"`
 }
 
 // UnmarshalChannel Convenience method to unmarshal a DynamoDB record directly
