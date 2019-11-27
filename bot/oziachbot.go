@@ -94,7 +94,7 @@ func (e ChannelAlreadyExistsError) Error() string {
 func (db *DynamoDBChannelDatabase) GetChannel(name string) (Channel, error) {
 	// Anonymous struct with just the channel name
 	channelKey := struct {
-		Name string
+		Name string `json:"name"`
 	}{Name: name}
 	marshalledKey, err := dynamodbattribute.MarshalMap(channelKey)
 
@@ -147,7 +147,7 @@ func (db *DynamoDBChannelDatabase) GetAllChannels() ([]Channel, error) {
 func (db *DynamoDBChannelDatabase) AddChannel(name string) (Channel, error) {
 	channel := Channel{
 		Name:        name,
-		IsConnected: true,
+		IsConnected: false,
 	}
 	marshalledChannel, err := dynamodbattribute.MarshalMap(channel)
 
@@ -156,7 +156,7 @@ func (db *DynamoDBChannelDatabase) AddChannel(name string) (Channel, error) {
 	}
 
 	expression, err := expression.NewBuilder().WithCondition(
-		expression.Name("Name").AttributeNotExists(),
+		expression.Name("name").AttributeNotExists(),
 	).Build()
 
 	if err != nil {
@@ -190,7 +190,7 @@ func (db *DynamoDBChannelDatabase) AddChannel(name string) (Channel, error) {
 func (db *DynamoDBChannelDatabase) UpdateChannel(name string, builder expression.Builder) (Channel, error) {
 	// Anonymous struct with just the channel name
 	channelKey := struct {
-		Name string
+		Name string `json:"name"`
 	}{Name: name}
 
 	marshalledKey, err := dynamodbattribute.MarshalMap(channelKey)
@@ -200,7 +200,7 @@ func (db *DynamoDBChannelDatabase) UpdateChannel(name string, builder expression
 	}
 
 	expression, err := builder.WithCondition(
-		expression.Name("Name").AttributeExists(),
+		expression.Name("name").AttributeExists(),
 	).Build()
 
 	if err != nil {
@@ -238,7 +238,7 @@ func (db *DynamoDBChannelDatabase) UpdateChannel(name string, builder expression
 func (bot *OziachBot) DisconnectFromChannel(name string) error {
 	// Expression builder to set IsConnected to false
 	builder := expression.NewBuilder().WithUpdate(
-		expression.Set(expression.Name("IsConnected"), expression.Value(false)),
+		expression.Set(expression.Name("isConnected"), expression.Value(false)),
 	)
 
 	log.Println("Attempting to disconnect from", name)
@@ -259,7 +259,7 @@ func (bot *OziachBot) DisconnectFromChannel(name string) error {
 func (bot *OziachBot) ConnectToChannel(name string) error {
 	// Expression builder to set IsConnected to true
 	builder := expression.NewBuilder().WithUpdate(
-		expression.Set(expression.Name("IsConnected"), expression.Value(true)),
+		expression.Set(expression.Name("isConnected"), expression.Value(true)),
 	)
 
 	log.Println("Attempting to connect to", name)
