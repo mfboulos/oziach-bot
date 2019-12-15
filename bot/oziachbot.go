@@ -300,7 +300,9 @@ func (bot *OziachBot) InitBot() error {
 	log.Println("Joining channels")
 
 	for _, channel := range channels {
-		bot.TwitchClient.Join(channel.Name)
+		if channel.IsConnected {
+			bot.TwitchClient.Join(channel.Name)
+		}
 	}
 
 	return nil
