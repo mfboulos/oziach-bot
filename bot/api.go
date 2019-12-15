@@ -138,6 +138,29 @@ func (bot *OziachBot) APIDisconnectFromChannel(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// APIChangeRSN Endpoint handler function to route to ChangeRSN
+func (bot *OziachBot) APIChangeRSN(w http.ResponseWriter, r *http.Request) {
+	pathParams := mux.Vars(r)
+	w.Header().Set("Content-Type", "application/json")
+
+	name, ok := pathParams["channel"]
+	rsn, ok2 := pathParams["rsn"]
+
+	if ok && ok2 {
+		err := bot.ChangeRSN(name, rsn)
+
+		if err != nil {
+			code := http.StatusInternalServerError
+			if _, ok := err.(ChannelNotFoundError); ok {
+				code = http.StatusNotFound
+			}
+			HTTPError(w, err, code)
+		}
+	} else {
+		HTTPError(w, "Bad request format: /channel/{channel}/rsn/{rsn} required", http.StatusBadRequest)
+	}
+}
+
 // Heartbeat Returns "ok" to validate the health of the application
 func Heartbeat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
@@ -158,6 +181,7 @@ func (bot *OziachBot) ServeAPI() {
 	// Configure all endpoints in the channel API
 	channelAPI.HandleFunc("/{channel}", bot.APIGetChannel).Methods(http.MethodGet)
 	channelAPI.HandleFunc("/{channel}", bot.APIAddChannel).Methods(http.MethodPost)
+	channelAPI.HandleFunc("/{channel}/rsn/{rsn}", bot.APIChangeRSN).Methods(http.MethodPut)
 	connectAPI.HandleFunc("/{channel}", bot.APIConnectToChannel).Methods(http.MethodPost)
 	connectAPI.HandleFunc("/{channel}", bot.APIDisconnectFromChannel).Methods(http.MethodDelete)
 

@@ -275,6 +275,18 @@ func (bot *OziachBot) ConnectToChannel(name string) error {
 	return err
 }
 
+// ChangeRSN Updates an existing channel by setting rsn
+func (bot *OziachBot) ChangeRSN(name, rsn string) error {
+	// Expression builder to set rsn
+	builder := expression.NewBuilder().WithUpdate(
+		expression.Set(expression.Name("rsn"), expression.Value(rsn)),
+	)
+
+	log.Printf("Attempting to change rsn of channel %s to %s", name, rsn)
+	_, err := bot.ChannelDB.UpdateChannel(name, builder)
+	return err
+}
+
 // InitBot Initalizes OziachBot by querying for channels and joining them
 func (bot *OziachBot) InitBot() error {
 	log.Println("Reading channels from DB")
