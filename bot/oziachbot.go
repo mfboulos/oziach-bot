@@ -318,28 +318,40 @@ func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message tw
 
 		switch message.Text[:idx] {
 		case "!lvl", "!level":
-			tokens := strings.SplitN(message.Text, " ", 3)
-			if len(tokens) < 3 {
+			numToks := 3
+			tokens := strings.SplitN(message.Text, " ", numToks)
+			obUser, _ := bot.ChannelDB.GetChannel(channel)
+			if len(tokens) < numToks && (len(tokens) < numToks-1 && obUser.RSN != "") {
 				break
 			}
 
 			skillName := tokens[1]
-			// Truncate player to 12 characters, max length of an OSRS username
-			player := tokens[2]
+			player := obUser.RSN
+
+			if player == "" {
+				player = tokens[2]
+			}
+
 			if len(player) > 12 {
 				player = player[:12]
 			}
 
 			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 		case "!total", "!overall":
-			tokens := strings.SplitN(message.Text, " ", 2)
-			if len(tokens) < 2 {
+			numToks := 2
+			tokens := strings.SplitN(message.Text, " ", numToks)
+			obUser, _ := bot.ChannelDB.GetChannel(channel)
+			if len(tokens) < numToks && (len(tokens) < numToks-1 && obUser.RSN != "") {
 				break
 			}
 
-			skillName := "Overall"
-			// Truncate player to 12 characters, max length of an OSRS username
-			player := tokens[1]
+			skillName := "overall"
+			player := obUser.RSN
+
+			if player == "" {
+				player = tokens[1]
+			}
+
 			if len(player) > 12 {
 				player = player[:12]
 			}
