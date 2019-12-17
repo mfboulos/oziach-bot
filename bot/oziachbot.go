@@ -322,43 +322,47 @@ func (bot *OziachBot) HandleMessage(channel string, user twitch.User, message tw
 		case "!lvl", "!level":
 			numToks := 3
 			tokens := strings.SplitN(message.Text, " ", numToks)
+
+			// Append the channel RSN if it's "nonzero"
+			// This puts the RSN in the right place if one is not provided, and
+			// lets it be ignored if one is provided
 			obUser, _ := bot.ChannelDB.GetChannel(channel)
-			if len(tokens) < numToks && (len(tokens) < numToks-1 && obUser.RSN != "") {
-				break
+			if obUser.RSN != "" {
+				tokens = append(tokens, obUser.RSN)
 			}
 
-			skillName := tokens[1]
-			player := obUser.RSN
+			if len(tokens) >= numToks {
+				skillName := tokens[1]
+				player := tokens[2]
 
-			if player == "" {
-				player = tokens[2]
+				if len(player) > 12 {
+					player = player[:12]
+				}
+
+				go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 			}
-
-			if len(player) > 12 {
-				player = player[:12]
-			}
-
-			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 		case "!total", "!overall":
 			numToks := 2
 			tokens := strings.SplitN(message.Text, " ", numToks)
+
+			// Append the channel RSN if it's "nonzero"
+			// This puts the RSN in the right place if one is not provided, and
+			// lets it be ignored if one is provided
 			obUser, _ := bot.ChannelDB.GetChannel(channel)
-			if len(tokens) < numToks && (len(tokens) < numToks-1 && obUser.RSN != "") {
-				break
+			if obUser.RSN != "" {
+				tokens = append(tokens, obUser.RSN)
 			}
 
-			skillName := "overall"
-			player := obUser.RSN
+			if len(tokens) >= numToks {
+				skillName := "overall"
+				player := tokens[1]
 
-			if player == "" {
-				player = tokens[1]
+				if len(player) > 12 {
+					player = player[:12]
+				}
+
+				go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 			}
-
-			if len(player) > 12 {
-				player = player[:12]
-			}
-
-			go bot.HandleSkillLookup(channel, user.DisplayName, skillName, player)
 		}
 	}
 }
